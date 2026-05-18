@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(head -100)",
+      "PowerShell(cd d:\\\\Trading; npx tsc --noEmit; Write-Host \"Exit: $LASTEXITCODE\")",
+      "PowerShell(cd d:\\\\Trading; npx tsc --noEmit 2>&1 | Select-Object -First 20; Write-Host \"Exit: $LASTEXITCODE\")"
+    ]
+  }
+}

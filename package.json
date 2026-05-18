@@ -1,0 +1,47 @@
+{
+  "name": "kite-fo-cli",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Kite Connect (Zerodha) F&O CLI utilities (TypeScript).",
+  "license": "UNLICENSED",
+  "scripts": {
+    "login:url": "tsx src/cli/login-url.ts",
+    "session:generate": "tsx src/cli/generate-session.ts",
+    "instruments:sync:nfo": "tsx src/cli/sync-nfo-instruments.ts",
+    "instruments:sync:nse": "tsx src/cli/sync-nse-instruments.ts",
+    "fo:search": "tsx src/cli/fo-search.ts",
+    "quote:ltp": "tsx src/cli/ltp.ts",
+    "order:fo": "tsx src/cli/place-fo-order.ts",
+    "backtest:run": "tsx src/cli/backtest-run.ts",
+    "backtest:kite": "tsx src/cli/backtest-kite.ts",
+    "backtest:options:today": "tsx src/cli/backtest-options-today.ts",
+    "paper:run": "tsx src/cli/paper-run.ts",
+    "analyze:nifty": "tsx src/cli/analyze-nifty.ts",
+    "analyze:breadth": "tsx src/cli/analyze-breadth.ts",
+    "stream:breadth": "tsx src/cli/stream-breadth.ts",
+    "stream:suggest": "tsx src/cli/stream-suggest.ts",
+    "ui:suggest": "tsx src/cli/ui-suggest.ts",
+    "telegram:test": "tsx src/cli/telegram-test.ts",
+    "telegram:chatids": "tsx src/cli/telegram-chatids.ts",
+    "news:check": "tsx src/cli/news-check.ts",
+    "defaults:nifty": "tsx src/cli/pick-nifty-defaults.ts",
+    "paper:options:today": "tsx src/cli/paper-options-today.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "start": "tsx src/cli/ui-suggest.ts"
+  },
+  "dependencies": {
+    "@napi-rs/canvas": "^0.1.80",
+    "dotenv": "^16.4.5",
+    "fast-xml-parser": "^4.5.5",
+    "kiteconnect": "^5.1.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.5",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
+  },
+  "overrides": {
+    "serialize-javascript": "^7.0.3"
+  }
+}
