@@ -219,6 +219,7 @@ tr:hover td{background:rgba(232,236,246,.025)}
       <span class="asof" id="asof">–</span>
       <button class="btn" id="btnPause">⏸ Pause</button>
       <button class="btn" id="btnResume" disabled>▶ Resume</button>
+      <a href="/token" class="btn btn-a" style="text-decoration:none;font-size:11px">🔑 Kite Auth</a>
       <a href="/logout" class="btn" style="text-decoration:none;color:rgba(232,236,246,.45);font-size:11px">Sign out</a>
     </div>
   </div>
@@ -900,9 +901,71 @@ async function main() {
     const icon = ok ? "✓" : "✗";
     return `<!doctype html><html><body style="font-family:system-ui;background:#02030a;color:#e8ecf6;padding:48px;text-align:center">
 <h2 style="color:${col};font-size:28px">${icon} ${message}</h2>
-${ok ? '<p style="color:#aaa">You can close this tab. The dashboard is restarting with the new token.</p>' : ""}
+${ok ? '<p style="color:#aaa">Token saved. Engine restarting — go back to the dashboard.</p>' : ""}
 <p style="margin-top:24px"><a href="/" style="color:#7c3aed;font-size:14px">← Back to dashboard</a></p>
 </body></html>`;
+  }
+
+  function tokenPageHtml(error = ""): string {
+    return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Kite Auth — NIFTY Trader</title>
+<style>
+  *{box-sizing:border-box}
+  body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;
+    background:radial-gradient(ellipse at 50% 0%,rgba(6,182,212,.15) 0%,#02030a 70%);
+    font-family:system-ui,-apple-system,'Segoe UI',Roboto,Arial,sans-serif;color:#e8ecf6}
+  .card{background:#0d1117;border:1px solid rgba(6,182,212,.28);border-radius:20px;
+    padding:36px 40px;width:480px;box-shadow:0 0 40px rgba(6,182,212,.1)}
+  h1{font-size:19px;font-weight:800;margin:0 0 4px}
+  .sub{font-size:12px;color:rgba(232,236,246,.5);margin:0 0 24px;line-height:1.5}
+  .step{background:rgba(232,236,246,.05);border:1px solid rgba(232,236,246,.1);border-radius:10px;
+    padding:12px 14px;margin-bottom:10px;font-size:12px;line-height:1.6}
+  .step b{color:#e8ecf6}.step a{color:#06b6d4}
+  label{display:block;font-size:11px;font-weight:700;letter-spacing:.7px;text-transform:uppercase;
+    color:rgba(232,236,246,.5);margin:16px 0 5px}
+  input{width:100%;padding:11px 14px;background:rgba(232,236,246,.06);border:1px solid rgba(232,236,246,.13);
+    border-radius:10px;color:#e8ecf6;font-size:13px;outline:none;font-family:var(--mono,monospace);transition:border .15s}
+  input:focus{border-color:#06b6d4}
+  .err{color:#f87171;font-size:12px;margin:8px 0;padding:8px 12px;background:rgba(239,68,68,.1);
+    border-radius:8px;display:${error ? "block" : "none"}}
+  button{width:100%;margin-top:14px;padding:12px;background:linear-gradient(135deg,#0891b2,#06b6d4);
+    border:none;border-radius:10px;color:#fff;font-size:14px;font-weight:700;cursor:pointer;transition:opacity .15s}
+  button:hover{opacity:.88}
+  .back{text-align:center;margin-top:16px;font-size:12px}
+  .back a{color:rgba(232,236,246,.4)}
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>🔑 Kite Authentication</h1>
+  <p class="sub">Generate a Kite session to start receiving live data.<br>Do this each morning before 9:15 AM.</p>
+
+  <div class="step">
+    <b>Step 1</b> — <a href="/auth" target="_blank">Click here to open Zerodha login →</a><br>
+    Log in with your Zerodha credentials.
+  </div>
+  <div class="step">
+    <b>Step 2</b> — After login, look at the URL in your browser.<br>
+    Copy the value after <b>request_token=</b> (stops at &amp; or end of URL).
+  </div>
+  <div class="step">
+    <b>Step 3</b> — Paste it below and click Submit.
+  </div>
+
+  <form method="POST" action="/token">
+    <label>Request Token</label>
+    <input name="request_token" type="text" placeholder="Paste request_token here…" autocomplete="off" required/>
+    <div class="err">${error}</div>
+    <button type="submit">Submit &amp; Activate →</button>
+  </form>
+  <div class="back"><a href="/">← Back to dashboard</a></div>
+</div>
+</body>
+</html>`;
   }
 
   // ── Login / session auth ────────────────────────────────────────────
@@ -1016,6 +1079,34 @@ ${ok ? '<p style="color:#aaa">You can close this tab. The dashboard is restartin
       return;
     }
 
+    // /token  → manual request_token entry page (no redirect URL config needed)
+    if (url === "/token" || url === "/token/") {
+      if (req.method === "POST") {
+        const body = await readBody(req);
+        const params = Object.fromEntries(new URLSearchParams(body));
+        const requestToken = (params["request_token"] ?? "").trim();
+        if (!requestToken) {
+          res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+          res.end(tokenPageHtml("Please paste a request_token."));
+          return;
+        }
+        try {
+          const { generateAndStoreSession } = await import("../kite/auth");
+          await generateAndStoreSession(requestToken);
+          if (child) { try { child.kill("SIGTERM"); } catch {} child = null; childRunning = false; buffer = ""; }
+          res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+          res.end(authHtml("Session activated! Engine restarting.", true));
+        } catch (e) {
+          res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+          res.end(tokenPageHtml("Failed: " + String(e)));
+        }
+      } else {
+        res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+        res.end(tokenPageHtml());
+      }
+      return;
+    }
+
     if (url === "/logout") {
       const token = getCookieToken(req);
       if (token) activeSessions.delete(token);
@@ -1036,10 +1127,22 @@ ${ok ? '<p style="color:#aaa">You can close this tab. The dashboard is restartin
     if (url === "/events") {
       ensureChild();
       const id = nowId();
-      res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" });
+      res.writeHead(200, {
+        "content-type": "text/event-stream",
+        "cache-control": "no-cache, no-transform",
+        "connection": "keep-alive",
+        "x-accel-buffering": "no",   // tell nginx/Railway proxy not to buffer
+        "transfer-encoding": "identity",
+      });
       res.write(`: connected ${id}\n\n`);
       clients.set(id, { id, res });
-      req.on("close", () => { clients.delete(id); });
+
+      // Keepalive ping every 25 s — prevents Railway/nginx from closing idle SSE connections.
+      const keepalive = setInterval(() => {
+        try { res.write(`: ping\n\n`); } catch { clearInterval(keepalive); }
+      }, 25_000);
+
+      req.on("close", () => { clients.delete(id); clearInterval(keepalive); });
       return;
     }
     // /auth  → redirect to Kite login page
