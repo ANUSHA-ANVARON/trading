@@ -972,7 +972,16 @@ ${ok ? '<p style="color:#aaa">Token saved. Engine restarting — go back to the 
   const UI_USERNAME = (process.env.UI_USERNAME ?? "admin").trim();
   const UI_PASSWORD = (process.env.UI_PASSWORD ?? "").trim();
   const authEnabled = UI_PASSWORD.length > 0;
-  const activeSessions = new Set<string>();
+
+  // Sessions survive restarts: derive a deterministic token from credentials + a fixed secret.
+  // Any browser that has a valid cookie keeps working across redeploys.
+  const { createHmac } = await import("crypto");
+  const SESSION_SECRET = process.env.UI_SESSION_SECRET ?? (UI_PASSWORD + UI_USERNAME + "nifty-trader-v1");
+  function makeToken(username: string): string {
+    return createHmac("sha256", SESSION_SECRET).update(username).digest("hex");
+  }
+  // Deterministic: same credentials always produce the same token, so no in-memory Set needed.
+  const VALID_TOKEN = authEnabled ? makeToken(UI_USERNAME) : null;
 
   function loginHtml(error = false): string {
     return `<!doctype html>
@@ -1038,7 +1047,7 @@ ${ok ? '<p style="color:#aaa">Token saved. Engine restarting — go back to the 
   function isLoggedIn(req: http.IncomingMessage): boolean {
     if (!authEnabled) return true;
     const token = getCookieToken(req);
-    return token !== null && activeSessions.has(token);
+    return token !== null && token === VALID_TOKEN;
   }
 
   function makeSessionCookie(token: string): string {
@@ -1065,8 +1074,7 @@ ${ok ? '<p style="color:#aaa">Token saved. Engine restarting — go back to the 
         const body = await readBody(req);
         const params = Object.fromEntries(new URLSearchParams(body));
         if (params.username === UI_USERNAME && params.password === UI_PASSWORD) {
-          const token = nowId() + nowId();
-          activeSessions.add(token);
+          const token = VALID_TOKEN!;
           res.writeHead(302, { "set-cookie": makeSessionCookie(token), location: "/" });
           res.end();
         } else {
@@ -1109,8 +1117,7 @@ ${ok ? '<p style="color:#aaa">Token saved. Engine restarting — go back to the 
     }
 
     if (url === "/logout") {
-      const token = getCookieToken(req);
-      if (token) activeSessions.delete(token);
+      // No server-side state to clear — token is deterministic.
       res.writeHead(302, { "set-cookie": "nifty_sess=; HttpOnly; Path=/; Max-Age=0", location: "/login" });
       res.end();
       return;
