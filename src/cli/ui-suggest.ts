@@ -1173,10 +1173,8 @@ ${ok ? '<p style="color:#aaa">Token saved. Engine restarting — go back to the 
       const id = nowId();
       res.writeHead(200, {
         "content-type": "text/event-stream",
-        "cache-control": "no-cache, no-transform",
-        "connection": "keep-alive",
-        "x-accel-buffering": "no",   // tell nginx/Railway proxy not to buffer
-        "transfer-encoding": "identity",
+        "cache-control": "no-cache",
+        "x-accel-buffering": "no",
       });
       res.write(`: connected ${id}\n\n`);
       clients.set(id, { id, res });
