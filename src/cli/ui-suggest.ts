@@ -961,7 +961,7 @@ ${ok ? '<p style="color:#aaa">You can close this tab. The dashboard is restartin
   });
 
   function startOnPort(port: number) {
-    server.listen(port, "127.0.0.1", () => {
+    server.listen(port, "0.0.0.0", () => {
       const addr = server.address();
       const actualPort = typeof addr === "object" && addr ? addr.port : port;
       // eslint-disable-next-line no-console
