@@ -1043,7 +1043,8 @@ ${ok ? '<p style="color:#aaa">Token saved. Engine restarting — go back to the 
 
   function makeSessionCookie(token: string): string {
     const secure = process.env.NODE_ENV === "production" || process.env.RAILWAY_ENVIRONMENT ? "; Secure" : "";
-    return `nifty_sess=${token}; HttpOnly; Path=/; Max-Age=86400; SameSite=Strict${secure}`;
+    // SameSite=Lax (not Strict) so the cookie is sent on OAuth top-level redirects back from Zerodha.
+    return `nifty_sess=${token}; HttpOnly; Path=/; Max-Age=86400; SameSite=Lax${secure}`;
   }
 
   async function readBody(req: http.IncomingMessage): Promise<string> {
@@ -1115,6 +1116,42 @@ ${ok ? '<p style="color:#aaa">Token saved. Engine restarting — go back to the 
       return;
     }
 
+    // /auth + /auth/callback are PUBLIC — Kite's API secret secures the callback,
+    // and SameSite=Lax cookies would be stripped anyway on the cross-site redirect.
+    if (url === "/auth" || url === "/auth/") {
+      try {
+        const { getLoginUrl } = await import("../kite/auth");
+        res.writeHead(302, { location: getLoginUrl() });
+        res.end();
+      } catch (e) {
+        res.writeHead(500, { "content-type": "text/plain; charset=utf-8" });
+        res.end("Failed to build login URL: " + String(e));
+      }
+      return;
+    }
+
+    if (url?.startsWith("/auth/callback")) {
+      try {
+        const qs = url.includes("?") ? url.slice(url.indexOf("?") + 1) : "";
+        const params = Object.fromEntries(qs.split("&").map((p) => p.split("=").map(decodeURIComponent)));
+        const requestToken = params["request_token"] ?? params["request-token"] ?? null;
+        if (!requestToken) {
+          res.writeHead(400, { "content-type": "text/html; charset=utf-8" });
+          res.end(authHtml("Missing request_token", false));
+          return;
+        }
+        const { generateAndStoreSession } = await import("../kite/auth");
+        await generateAndStoreSession(requestToken);
+        if (child) { try { child.kill("SIGTERM"); } catch {} child = null; childRunning = false; buffer = ""; }
+        res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+        res.end(authHtml("Session activated! Engine restarting.", true));
+      } catch (e) {
+        res.writeHead(500, { "content-type": "text/html; charset=utf-8" });
+        res.end(authHtml("Failed: " + String(e), false));
+      }
+      return;
+    }
+
     // ── Auth gate — redirect to /login if not authenticated ──────────
     if (!isLoggedIn(req)) {
       res.writeHead(302, { location: "/login" });
@@ -1145,44 +1182,6 @@ ${ok ? '<p style="color:#aaa">Token saved. Engine restarting — go back to the 
       req.on("close", () => { clients.delete(id); clearInterval(keepalive); });
       return;
     }
-    // /auth  → redirect to Kite login page
-    if (url === "/auth" || url === "/auth/") {
-      try {
-        const { getLoginUrl } = await import("../kite/auth");
-        const loginUrl = getLoginUrl();
-        res.writeHead(302, { location: loginUrl });
-        res.end();
-      } catch (e) {
-        res.writeHead(500, { "content-type": "text/plain; charset=utf-8" });
-        res.end("Failed to build login URL: " + String(e));
-      }
-      return;
-    }
-
-    // /auth/callback?request_token=XXX  → Kite sends user here after login
-    if (url?.startsWith("/auth/callback")) {
-      try {
-        const qs = url.includes("?") ? url.slice(url.indexOf("?") + 1) : "";
-        const params = Object.fromEntries(qs.split("&").map((p) => p.split("=").map(decodeURIComponent)));
-        const requestToken = params["request_token"] ?? params["request-token"] ?? null;
-        if (!requestToken) {
-          res.writeHead(400, { "content-type": "text/html; charset=utf-8" });
-          res.end(authHtml("Missing request_token", false));
-          return;
-        }
-        const { generateAndStoreSession } = await import("../kite/auth");
-        await generateAndStoreSession(requestToken);
-        // Kill running engine so it restarts with the new token on next client connect.
-        if (child) { try { child.kill("SIGTERM"); } catch {} child = null; childRunning = false; buffer = ""; }
-        res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-        res.end(authHtml("Session generated! Engine will restart with new token.", true));
-      } catch (e) {
-        res.writeHead(500, { "content-type": "text/html; charset=utf-8" });
-        res.end(authHtml("Failed: " + String(e), false));
-      }
-      return;
-    }
-
     if (url === "/favicon.ico") { res.writeHead(204); res.end(); return; }
     res.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
     res.end("Not found");
