@@ -219,6 +219,7 @@ tr:hover td{background:rgba(232,236,246,.025)}
       <span class="asof" id="asof">–</span>
       <button class="btn" id="btnPause">⏸ Pause</button>
       <button class="btn" id="btnResume" disabled>▶ Resume</button>
+      <a href="/logout" class="btn" style="text-decoration:none;color:rgba(232,236,246,.45);font-size:11px">Sign out</a>
     </div>
   </div>
 </div>
@@ -904,8 +905,132 @@ ${ok ? '<p style="color:#aaa">You can close this tab. The dashboard is restartin
 </body></html>`;
   }
 
+  // ── Login / session auth ────────────────────────────────────────────
+  const UI_USERNAME = (process.env.UI_USERNAME ?? "admin").trim();
+  const UI_PASSWORD = (process.env.UI_PASSWORD ?? "").trim();
+  const authEnabled = UI_PASSWORD.length > 0;
+  const activeSessions = new Set<string>();
+
+  function loginHtml(error = false): string {
+    return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Login — NIFTY Trader</title>
+<style>
+  *{box-sizing:border-box}
+  body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;
+    background:radial-gradient(ellipse at 50% 0%,rgba(124,58,237,.18) 0%,#02030a 70%);
+    font-family:system-ui,-apple-system,'Segoe UI',Roboto,Arial,sans-serif;color:#e8ecf6}
+  .card{background:#0d1117;border:1px solid rgba(124,58,237,.3);border-radius:20px;
+    padding:40px 44px;width:360px;box-shadow:0 0 40px rgba(124,58,237,.12)}
+  .logo{width:44px;height:44px;border-radius:13px;background:linear-gradient(135deg,#7c3aed,#06b6d4);
+    display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:900;
+    color:#fff;margin:0 auto 20px}
+  h1{text-align:center;font-size:20px;font-weight:800;margin:0 0 6px;letter-spacing:-.3px}
+  .sub{text-align:center;font-size:12px;color:rgba(232,236,246,.5);margin-bottom:28px}
+  label{display:block;font-size:11px;font-weight:700;letter-spacing:.7px;text-transform:uppercase;
+    color:rgba(232,236,246,.55);margin-bottom:5px}
+  input{width:100%;padding:11px 14px;background:rgba(232,236,246,.06);border:1px solid rgba(232,236,246,.13);
+    border-radius:10px;color:#e8ecf6;font-size:14px;outline:none;margin-bottom:16px;
+    font-family:inherit;transition:border .15s}
+  input:focus{border-color:rgba(124,58,237,.6)}
+  .err{background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.35);border-radius:8px;
+    color:#f87171;font-size:12px;padding:9px 12px;margin-bottom:16px;text-align:center;
+    display:${error ? "block" : "none"}}
+  button{width:100%;padding:12px;background:linear-gradient(135deg,#7c3aed,#6d28d9);
+    border:none;border-radius:10px;color:#fff;font-size:14px;font-weight:700;
+    cursor:pointer;letter-spacing:.2px;transition:opacity .15s}
+  button:hover{opacity:.88}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="logo">N</div>
+  <h1>NIFTY Trader</h1>
+  <p class="sub">Live options analysis dashboard</p>
+  <form method="POST" action="/login">
+    <div class="err">Invalid username or password</div>
+    <label>Username</label>
+    <input name="username" type="text" autocomplete="username" autofocus required/>
+    <label>Password</label>
+    <input name="password" type="password" autocomplete="current-password" required/>
+    <button type="submit">Sign in →</button>
+  </form>
+</div>
+</body>
+</html>`;
+  }
+
+  function getCookieToken(req: http.IncomingMessage): string | null {
+    const header = req.headers.cookie ?? "";
+    for (const part of header.split(";")) {
+      const [k, v] = part.trim().split("=");
+      if (k?.trim() === "nifty_sess" && v?.trim()) return v.trim();
+    }
+    return null;
+  }
+
+  function isLoggedIn(req: http.IncomingMessage): boolean {
+    if (!authEnabled) return true;
+    const token = getCookieToken(req);
+    return token !== null && activeSessions.has(token);
+  }
+
+  function makeSessionCookie(token: string): string {
+    const secure = process.env.NODE_ENV === "production" || process.env.RAILWAY_ENVIRONMENT ? "; Secure" : "";
+    return `nifty_sess=${token}; HttpOnly; Path=/; Max-Age=86400; SameSite=Strict${secure}`;
+  }
+
+  async function readBody(req: http.IncomingMessage): Promise<string> {
+    return new Promise((resolve) => {
+      let data = "";
+      req.on("data", (chunk) => { data += String(chunk); });
+      req.on("end", () => resolve(data));
+      req.on("error", () => resolve(""));
+    });
+  }
+
   const server = http.createServer(async (req, res) => {
     const url = req.url ?? "/";
+
+    // ── Login routes (always public) ─────────────────────────────────
+    if (url === "/login" || url === "/login/") {
+      if (req.method === "POST") {
+        const body = await readBody(req);
+        const params = Object.fromEntries(new URLSearchParams(body));
+        if (params.username === UI_USERNAME && params.password === UI_PASSWORD) {
+          const token = nowId() + nowId();
+          activeSessions.add(token);
+          res.writeHead(302, { "set-cookie": makeSessionCookie(token), location: "/" });
+          res.end();
+        } else {
+          res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+          res.end(loginHtml(true));
+        }
+      } else {
+        res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+        res.end(loginHtml(false));
+      }
+      return;
+    }
+
+    if (url === "/logout") {
+      const token = getCookieToken(req);
+      if (token) activeSessions.delete(token);
+      res.writeHead(302, { "set-cookie": "nifty_sess=; HttpOnly; Path=/; Max-Age=0", location: "/login" });
+      res.end();
+      return;
+    }
+
+    // ── Auth gate — redirect to /login if not authenticated ──────────
+    if (!isLoggedIn(req)) {
+      res.writeHead(302, { location: "/login" });
+      res.end();
+      return;
+    }
+
     if (url === "/") { res.writeHead(200, { "content-type": "text/html; charset=utf-8" }); res.end(htmlPage({ title: "Live Trade Suggestion" })); return; }
     if (url === "/health") { res.writeHead(200, { "content-type": "application/json; charset=utf-8" }); res.end(JSON.stringify({ ok: true, app: "kite-fo-ui", clients: clients.size, engineRunning: childRunning, lastEngineExit, lastEngineError })); return; }
     if (url === "/events") {
