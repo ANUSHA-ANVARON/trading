@@ -673,9 +673,11 @@ async function main() {
 
   // Stock flow tracking for Spartan/Surfing labeling.
   // We bucket by 1 minute and compute traded value using volume deltas × last_price.
-  // Threshold: >= 100cr INR per 1m bucket => SPARTAN.
+  // SPARTAN: >= 100cr INR per 1m bucket.
+  // SURF_TRIGGER: >= 50cr needed to stamp lastBuy/lastSell/lastSurfingUp/lastSurfingDn.
   const CRORE_INR = 10_000_000;
-  const SPARTAN_THRESHOLD_INR = 50 * CRORE_INR;
+  const SPARTAN_THRESHOLD_INR = 100 * CRORE_INR;
+  const SURF_TRIGGER_THRESHOLD_CR = 50; // crores — min turnover to register a BUY/SELL/SURF signal stamp
 
   type StockFlowState = {
     bucketStartMs: number | null;
@@ -1139,14 +1141,18 @@ async function main() {
         lastSurfingDn: null,
       };
       const tsNow = new Date().toISOString();
-      // lastBuy / lastSell: only on genuine direction flip (not just mode change while staying UP/DOWN)
-      if (prevDir !== "UP" && r.dir === "UP") hist.lastBuy = tsNow;
-      if (prevDir !== "DOWN" && r.dir === "DOWN") hist.lastSell = tsNow;
-      // Label changes: only when the specific label is newly entered
+      const turnoverCrNow = r.turnoverCr_1m ?? 0;
+      const meetsFlowMin = turnoverCrNow >= SURF_TRIGGER_THRESHOLD_CR;
+
+      // lastBuy / lastSell: genuine direction flip AND turnover >= 50cr
+      if (prevDir !== "UP" && r.dir === "UP" && meetsFlowMin) hist.lastBuy = tsNow;
+      if (prevDir !== "DOWN" && r.dir === "DOWN" && meetsFlowMin) hist.lastSell = tsNow;
+      // SPARTAN stamps: label newly entered (SPARTAN already implies >= 100cr, no extra check needed)
       if (prevLabel !== "SPARTAN_UP" && r.label === "SPARTAN_UP") hist.lastSpartanUp = tsNow;
       if (prevLabel !== "SPARTAN_DN" && r.label === "SPARTAN_DN") hist.lastSpartanDn = tsNow;
-      if (prevLabel !== "SURFINGUP" && r.label === "SURFINGUP") hist.lastSurfingUp = tsNow;
-      if (prevLabel !== "SURFINGDN" && r.label === "SURFINGDN") hist.lastSurfingDn = tsNow;
+      // SURFING stamps: label newly entered AND turnover >= 50cr
+      if (prevLabel !== "SURFINGUP" && r.label === "SURFINGUP" && meetsFlowMin) hist.lastSurfingUp = tsNow;
+      if (prevLabel !== "SURFINGDN" && r.label === "SURFINGDN" && meetsFlowMin) hist.lastSurfingDn = tsNow;
       stockSignalHistory.set(r.key, hist);
 
       lastStockState.set(token, state);
