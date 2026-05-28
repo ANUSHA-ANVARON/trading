@@ -409,7 +409,7 @@ tr:hover td{background:rgba(232,236,246,.025)}
   <div class="ct">Timeframes <span class="hint">1m · 5m · 15m — PnC = probability × confidence × confluence</span></div>
   <div style="overflow:auto">
     <table class="mono tfTable">
-      <thead><tr><th>TF</th><th>Fut</th><th>Rec</th><th>Conf</th><th>Prob</th><th>PnC</th><th>Align</th></tr></thead>
+      <thead><tr><th>TF</th><th>Fut</th><th>Rec</th><th>Conf</th><th>Prob</th><th>PnC</th><th>Align</th><th>RSI</th><th>BB %B</th></tr></thead>
       <tbody id="tfBody"></tbody>
     </table>
   </div>
@@ -431,11 +431,13 @@ tr:hover td{background:rgba(232,236,246,.025)}
 <!-- SIGNAL HISTORY -->
 <div class="card">
   <div class="ctog open" id="sigTog">
-    <div class="ct" style="margin:0">NIFTY 50 — Signal History <span class="hint">last trigger per stock (IST) · SPARTAN ≥100cr/min · sorted by latest SPARTAN</span></div>
+    <div class="ct" style="margin:0">NIFTY 50 — Signal History <span class="hint">last trigger per stock (IST) · SPARTAN ≥50cr/min · sorted by latest activity</span></div>
     <span class="chev">▼</span>
   </div>
   <div class="cbody" id="sigBody" style="max-height:600px">
-    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:10px 0 8px">
+    <!-- Recently triggered chips -->
+    <div id="recentTrig" style="display:flex;flex-wrap:wrap;gap:6px;margin:10px 0 6px;min-height:28px"></div>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:0 0 8px">
       <input id="sigFilter" class="fi" placeholder="Filter symbol…"/>
       <button class="btn btn-g" id="btnExport">⬇ Export CSV</button>
     </div>
@@ -698,13 +700,47 @@ function renderPredRms(obj){
 // ── Signal History ─────────────────────────────────────────────────
 function renderSH(arr){
   lastSH=arr||[];
-  var tbody=e('sigBody2'),note=e('sigNote');if(!tbody)return;
+  var tbody=e('sigBody2'),note=e('sigNote'),rt=e('recentTrig');if(!tbody)return;
   tbody.innerHTML='';
+
+  // Recently triggered chips: any stock with a trigger in the last 30 min
+  if(rt){
+    rt.innerHTML='';
+    if(Array.isArray(arr)&&arr.length){
+      var nowMs=Date.now(),windowMs=30*60*1000;
+      var recent=[];
+      for(var ii=0;ii<arr.length;ii++){
+        var rx=arr[ii];
+        var stamps=[rx.lastSpartanUp,rx.lastSpartanDn,rx.lastSurfingUp,rx.lastSurfingDn,rx.lastBuy,rx.lastSell];
+        var latest='',isSpartan=false,isUp=false;
+        for(var si=0;si<stamps.length;si++){if(stamps[si]&&stamps[si]>latest){latest=stamps[si];isSpartan=si<=1;isUp=si===0||si===2||si===4;}}
+        if(latest&&(nowMs-new Date(latest).getTime())<windowMs){recent.push({sym:rx.symbol||rx.key,ts:latest,isSpartan:isSpartan,isUp:isUp});}
+      }
+      recent.sort(function(a,b){return b.ts.localeCompare(a.ts);});
+      if(recent.length){
+        var lbl=document.createElement('span');lbl.style.cssText='font-size:11px;opacity:.6;align-self:center;white-space:nowrap';lbl.textContent='Recent (30m):';rt.appendChild(lbl);
+        for(var ri=0;ri<Math.min(recent.length,15);ri++){
+          var rc=recent[ri],chip=document.createElement('span');
+          chip.style.cssText='display:inline-flex;align-items:center;gap:3px;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700;border:1px solid '+(rc.isUp?'rgba(34,197,94,.4)':'rgba(239,68,68,.4)')+';background:'+(rc.isUp?'rgba(34,197,94,.1)':'rgba(239,68,68,.1)')+';color:'+(rc.isUp?'var(--g2)':'var(--r2)');
+          chip.title=toIST(rc.ts)+(rc.isSpartan?' · SPARTAN':'');
+          chip.innerHTML=(rc.isUp?'▲':'▼')+' '+rc.sym+(rc.isSpartan?'<sup style="font-size:9px;margin-left:2px">S</sup>':'');
+          rt.appendChild(chip);
+        }
+      } else {
+        var none=document.createElement('span');none.style.cssText='font-size:11px;opacity:.4';none.textContent='No triggers in last 30 min';rt.appendChild(none);
+      }
+    }
+  }
+
   if(!Array.isArray(arr)||!arr.length){if(note)note.textContent='Waiting for signal history…';return;}
   if(note)note.textContent='';
   var filt=sigFilt.trim().toUpperCase();
   var rows=filt?arr.filter(function(r){return(r.symbol||'').toUpperCase().indexOf(filt)>=0;}):arr;
-  rows=rows.slice().sort(function(a,b){var ta=a.lastSpartanUp||a.lastSpartanDn||a.lastBuy||'',tb=b.lastSpartanUp||b.lastSpartanDn||b.lastBuy||'';if(ta&&tb)return tb.localeCompare(ta);return ta?-1:tb?1:(a.symbol||'').localeCompare(b.symbol||'');});
+  rows=rows.slice().sort(function(a,b){
+    var ta=a.lastSpartanUp||a.lastSpartanDn||a.lastSurfingUp||a.lastSurfingDn||a.lastBuy||a.lastSell||'';
+    var tb=b.lastSpartanUp||b.lastSpartanDn||b.lastSurfingUp||b.lastSurfingDn||b.lastBuy||b.lastSell||'';
+    if(ta&&tb)return tb.localeCompare(ta);return ta?-1:tb?1:(a.symbol||'').localeCompare(b.symbol||'');
+  });
   for(var i=0;i<rows.length;i++){
     var r=rows[i],hasSp=r.lastSpartanUp||r.lastSpartanDn,tr=document.createElement('tr');
     if(hasSp)tr.className='srow';
@@ -754,12 +790,17 @@ function applyUpdate(obj){
       for(var i=0;i<rows.length;i++){
         var rv=rows[i].v||{};
         var tr=document.createElement('tr');
+        var sig=rv.signals||{},rsiVal=sig.rsi14!=null?Number(sig.rsi14):null,bbVal=sig.bb!=null?Number(sig.bb.pctB):null;
+        var rsiCls=rsiVal!=null?(rsiVal>=60?'up':rsiVal<=40?'dn':''):'';
+        var bbCls=bbVal!=null?(bbVal>0.8?'dn':bbVal<0.2?'up':''):'';
         tr.innerHTML='<td class="mono">'+rows[i].k+'</td><td class="mono">'+(obj.futureLtp!=null?fmt(obj.futureLtp,2):'–')+'</td>'+
           '<td><span class="pill '+pillCls(rv.recommendation)+'">'+String(rv.recommendation||'–')+'</span></td>'+
           '<td class="mono">'+(rv.confidence!=null?(rv.confidence*100).toFixed(1)+'%':'–')+'</td>'+
           '<td class="mono">'+(rv.probability!=null?(rv.probability*100).toFixed(1)+'%':'–')+'</td>'+
           '<td class="mono">'+(rv.pnc!=null?Number(rv.pnc).toFixed(4):'–')+'</td>'+
-          '<td class="mono">'+((rv.confluence&&rv.confluence.ratio!=null)?(rv.confluence.ratio*100).toFixed(0)+'%':'–')+'</td>';
+          '<td class="mono">'+((rv.confluence&&rv.confluence.ratio!=null)?(rv.confluence.ratio*100).toFixed(0)+'%':'–')+'</td>'+
+          '<td class="mono '+rsiCls+'">'+(rsiVal!=null?rsiVal.toFixed(1):'–')+'</td>'+
+          '<td class="mono '+bbCls+'">'+(bbVal!=null?(bbVal*100).toFixed(0)+'%':'–')+'</td>';
         tfb.appendChild(tr);
       }
     } else {if(tfn)tfn.textContent='Warming up…';}
@@ -767,14 +808,14 @@ function applyUpdate(obj){
 
   var b=obj.breadth||{},bmv=b.weighted_move_pct,imbv=b.buy_sell_imbalance;
   if(e('bm')){e('bm').textContent=bmv==null?'–':fmt(bmv,3)+'%';e('bm').className='mono '+(bmv>0?'up':bmv<0?'dn':'');}
-  if(e('ad'))e('ad').textContent=String(b.advancers||'–')+' / '+String(b.decliners||'–');
+  if(e('ad'))e('ad').innerHTML='<span style="color:var(--g2);font-weight:700">▲ '+String(b.advancers||'–')+'</span>&nbsp;<span style="color:var(--r2);font-weight:700">▼ '+String(b.decliners||'–')+'</span>';
   if(e('imb')){e('imb').textContent=imbv==null?'–':fmt(imbv,3);e('imb').className='mono '+(imbv>0.05?'up':imbv<-0.05?'dn':'');}
 
   // Quick stats (4 cols)
   if(e('stF'))e('stF').textContent=obj.futureLtp!=null?fmt(obj.futureLtp,0):'–';
   if(e('stFc'))e('stFc').textContent=obj.futureLtp!=null?'ltp':'–';
   if(e('stB')){e('stB').textContent=bmv!=null?(bmv>=0?'+':'')+fmt(bmv,2)+'%':'–';e('stB').className='sv mono '+(bmv>0?'up':bmv<0?'dn':'neu');}
-  if(e('stAD'))e('stAD').textContent=String(b.advancers||'–')+' adv / '+String(b.decliners||'–')+' dec';
+  if(e('stAD'))e('stAD').innerHTML='<span style="color:var(--g2);font-weight:700">▲ '+String(b.advancers||'–')+'</span> <span style="color:var(--r2);font-weight:700">▼ '+String(b.decliners||'–')+'</span>';
   if(e('stI')){e('stI').textContent=imbv!=null?(imbv>=0?'+':'')+fmt(imbv,3):'–';e('stI').className='sv mono '+(imbv>0.05?'up':imbv<-0.05?'dn':'neu');}
   var pcrv=obj.options&&obj.options.chain&&obj.options.chain.totals?obj.options.chain.totals.pcr:null;
   if(e('stP')){e('stP').textContent=pcrv!=null?fmt(pcrv,2):'–';e('stP').className='sv mono '+(pcrv>1.1?'up':pcrv<0.9?'dn':'neu');}

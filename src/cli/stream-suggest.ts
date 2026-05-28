@@ -5,7 +5,7 @@ import { analyzeBreadthFromTicks } from "../analysis/breadthFromTicks";
 import { equalWeightsForNifty50 } from "../analysis/weightsFallback";
 import { pickNearExpiryNiftyFutureKey } from "../analysis/defaults";
 import { pickNearestWeeklyNiftyOptionExpiry } from "../analysis/defaults";
-import { sma, rsi, atr } from "../analysis/indicators";
+import { sma, rsi, atr, bollingerBands } from "../analysis/indicators";
 import { CandleAggregator } from "../live/candleAggregator";
 import { getInstruments } from "../instruments/instrumentsCache";
 import { createKiteTicker } from "../kite/ticker";
@@ -425,6 +425,7 @@ function scoreSuggestion(input: {
   const slowSma = sma(closes, input.slow);
   const rsi14 = rsi(closes, 14);
   const atr14 = atr(input.candles, 14);
+  const bb = bollingerBands(closes, 20, 2);
 
   const adv = input.breadth.advancers;
   const dec = input.breadth.decliners;
@@ -460,7 +461,7 @@ function scoreSuggestion(input: {
   const wantShort = trend === "BEAR";
 
   let aligned = 0;
-  const total = 5;
+  const total = 6;
 
   // 1) Trend (always counts once if present)
   aligned++;
@@ -510,6 +511,18 @@ function scoreSuggestion(input: {
     reasons.push(`atrPct=${atrPct === null ? "NA" : atrPct.toFixed(3)} low`);
   }
 
+  // 6) Bollinger Bands: price above middle for longs, below for shorts; not overstretched
+  const bbOk = bb !== null && (
+    (wantLong && bb.pctB > 0.5 && bb.pctB < 0.95) ||
+    (wantShort && bb.pctB < 0.5 && bb.pctB > 0.05)
+  );
+  if (bbOk && bb !== null) {
+    aligned++;
+    reasons.push(`bb pctB=${bb.pctB.toFixed(2)} ok (bw=${bb.bandwidth.toFixed(4)})`);
+  } else {
+    reasons.push(`bb pctB=${bb === null ? "NA" : bb.pctB.toFixed(2)} not ok`);
+  }
+
   const requiredAligned = input.aggressive ? 3 : 4;
   const recommendation = aligned >= requiredAligned ? (wantLong ? "LONG" : "SHORT") : "NO_TRADE";
 
@@ -533,6 +546,7 @@ function scoreSuggestion(input: {
       slowSma: slowSma === null ? null : Number(slowSma.toFixed(2)),
       rsi14: rsi14 === null ? null : Number(rsi14.toFixed(2)),
       atrPct: atrPct === null ? null : Number(atrPct.toFixed(4)),
+      bb: bb ?? null,
       breadthWeightedMovePct: Number(input.breadth.weighted_move_pct.toFixed(3)),
       advDec: Number(advDec.toFixed(3)),
       futChangePct: Number(input.futChangePct.toFixed(3)),
@@ -661,7 +675,7 @@ async function main() {
   // We bucket by 1 minute and compute traded value using volume deltas × last_price.
   // Threshold: >= 100cr INR per 1m bucket => SPARTAN.
   const CRORE_INR = 10_000_000;
-  const SPARTAN_THRESHOLD_INR = 100 * CRORE_INR;
+  const SPARTAN_THRESHOLD_INR = 50 * CRORE_INR;
 
   type StockFlowState = {
     bucketStartMs: number | null;

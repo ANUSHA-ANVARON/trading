@@ -58,3 +58,29 @@ export function atr(candles: Candle[], period = 14): number | null {
 
   return sma(trs, period);
 }
+
+export type BollingerBands = {
+  upper: number;
+  middle: number;
+  lower: number;
+  bandwidth: number; // (upper - lower) / middle
+  pctB: number;      // where price sits within bands: 0=lower, 1=upper
+};
+
+export function bollingerBands(values: number[], period = 20, stdDevMult = 2): BollingerBands | null {
+  if (period <= 0) throw new Error("period must be > 0");
+  if (values.length < period) return null;
+
+  const slice = values.slice(values.length - period);
+  const middle = slice.reduce((a, b) => a + b, 0) / period;
+  const variance = slice.reduce((sum, v) => sum + (v - middle) ** 2, 0) / period;
+  const stdDev = Math.sqrt(variance);
+
+  const upper = middle + stdDevMult * stdDev;
+  const lower = middle - stdDevMult * stdDev;
+  const price = values[values.length - 1];
+  const bandwidth = middle !== 0 ? (upper - lower) / middle : 0;
+  const pctB = upper !== lower ? (price - lower) / (upper - lower) : 0.5;
+
+  return { upper: +upper.toFixed(2), middle: +middle.toFixed(2), lower: +lower.toFixed(2), bandwidth: +bandwidth.toFixed(4), pctB: +pctB.toFixed(4) };
+}
