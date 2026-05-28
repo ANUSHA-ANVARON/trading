@@ -1723,6 +1723,7 @@ async function main() {
       s5rsi: typeof s5.signals?.rsi14 === "number" ? s5.signals.rsi14 : null,
       s15rec: String(s15.recommendation ?? "NO_TRADE"),
       s15conf: typeof s15.confidence === "number" ? s15.confidence : null,
+      s15rsi: typeof s15.signals?.rsi14 === "number" ? s15.signals.rsi14 : null,
       weightedMovePct: breadth.weighted_move_pct ?? 0,
       advancers: breadth.advancers ?? 0,
       decliners: breadth.decliners ?? 0,

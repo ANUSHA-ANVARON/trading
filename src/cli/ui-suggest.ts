@@ -259,10 +259,11 @@ tr:hover td{background:rgba(232,236,246,.025)}
   </div>
 
   <!-- Metrics row -->
-  <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:8px;margin-bottom:12px;font-size:11px;text-align:center" id="lcMetrics">
+  <div style="display:grid;grid-template-columns:repeat(8,1fr);gap:8px;margin-bottom:12px;font-size:11px;text-align:center" id="lcMetrics">
     <div><div style="color:var(--m);font-size:10px;margin-bottom:2px">SCSE</div><div class="mono" id="lcScse" style="font-size:18px;font-weight:800">–</div></div>
     <div><div style="color:var(--m);font-size:10px;margin-bottom:2px">RSI 1m</div><div class="mono" id="lcRsi1" style="font-size:16px;font-weight:700">–</div></div>
     <div><div style="color:var(--m);font-size:10px;margin-bottom:2px">RSI 5m</div><div class="mono" id="lcRsi5" style="font-size:16px;font-weight:700">–</div></div>
+    <div><div style="color:var(--m);font-size:10px;margin-bottom:2px">RSI 15m</div><div class="mono" id="lcRsi15" style="font-size:16px;font-weight:700">–</div></div>
     <div><div style="color:var(--m);font-size:10px;margin-bottom:2px">Dom B/S</div><div class="mono" id="lcDom" style="font-size:13px;font-weight:700">–</div></div>
     <div><div style="color:var(--m);font-size:10px;margin-bottom:2px">SP↑/↓</div><div class="mono" id="lcSp" style="font-size:13px;font-weight:700">–</div></div>
     <div><div style="color:var(--m);font-size:10px;margin-bottom:2px">SU↑/↓</div><div class="mono" id="lcSu" style="font-size:13px;font-weight:700">–</div></div>
@@ -282,7 +283,7 @@ tr:hover td{background:rgba(232,236,246,.025)}
           <th style="text-align:left">Session</th>
           <th style="text-align:left">State / Flow</th>
           <th style="text-align:left">Action</th>
-          <th>RSI 1m/5m</th>
+          <th>RSI 1m/5m/15m</th>
           <th>Raw RR</th>
           <th>Eff CE</th>
           <th>Eff PE</th>
@@ -594,7 +595,8 @@ function renderLifecycle(obj){
   var sc=lc.scse!=null?lc.scse:null;
   var scEl=e('lcScse');if(scEl){scEl.textContent=sc!=null?String(sc):'–';scEl.className='mono '+scseClass(sc||0);}
   var r1=e('lcRsi1');if(r1){r1.textContent=lc.rsi&&lc.rsi.m1!=null?fmt(lc.rsi.m1,1):'–';if(lc.rsi&&lc.rsi.m1!=null)r1.style.color=lc.rsi.m1>55?'var(--g)':lc.rsi.m1<45?'var(--r)':'var(--m)';}
-  var r5=e('lcRsi5');if(r5){r5.textContent=lc.rsi&&lc.rsi.m5!=null?fmt(lc.rsi.m5,1):'–';}
+  var r5=e('lcRsi5');if(r5){r5.textContent=lc.rsi&&lc.rsi.m5!=null?fmt(lc.rsi.m5,1):'–';if(lc.rsi&&lc.rsi.m5!=null)r5.style.color=lc.rsi.m5>55?'var(--g)':lc.rsi.m5<45?'var(--r)':'var(--m)';}
+  var r15=e('lcRsi15');if(r15){r15.textContent=lc.rsi&&lc.rsi.m15!=null?fmt(lc.rsi.m15,1):'–';if(lc.rsi&&lc.rsi.m15!=null)r15.style.color=lc.rsi.m15>55?'var(--g)':lc.rsi.m15<45?'var(--r)':'var(--m)';}
   var dm=e('lcDom');if(dm&&lc.dominance){var d=lc.dominance;dm.textContent='B '+d.buy+'/S '+d.sell;dm.style.color=d.side==='BUY'?'var(--g)':d.side==='SELL'?'var(--r)':'var(--m)';}
   var sp=e('lcSp');if(sp&&lc.spartan)sp.textContent=lc.spartan.up+'↑ '+lc.spartan.dn+'↓';
   var su=e('lcSu');if(su&&lc.surfing)su.textContent=lc.surfing.up+'↑ '+lc.surfing.dn+'↓';
@@ -621,7 +623,7 @@ function renderLifecycle(obj){
           '<td style="text-align:left;font-size:10px;color:var(--m)">'+String(h.session||'–').replace(/_/g,' ')+'</td>'+
           '<td style="text-align:left" class="'+stateCls(h.state)+'">'+String(h.state||'–').replace(/_/g,' ')+'</td>'+
           '<td style="text-align:left" class="'+ac2cls+'">'+ac2.replace(/_/g,' ')+'</td>'+
-          '<td>'+(h.rsi&&h.rsi.m1!=null?fmt(h.rsi.m1,0):'–')+' / '+(h.rsi&&h.rsi.m5!=null?fmt(h.rsi.m5,0):'–')+'</td>'+
+          '<td>'+(h.rsi&&h.rsi.m1!=null?fmt(h.rsi.m1,0):'–')+' / '+(h.rsi&&h.rsi.m5!=null?fmt(h.rsi.m5,0):'–')+' / '+(h.rsi&&h.rsi.m15!=null?fmt(h.rsi.m15,0):'–')+'</td>'+
           '<td>'+(h.rr?fmt(h.rr.rawCE,2):'–')+'</td>'+
           '<td class="'+(h.rr&&h.rr.effCE>1.5?'up':h.rr&&h.rr.effCE<0.8?'dn':'')+'">'+  (h.rr?fmt(h.rr.effCE,2):'–')+'</td>'+
           '<td class="'+(h.rr&&h.rr.effPE>1.5?'up':h.rr&&h.rr.effPE<0.8?'dn':'')+'">'+  (h.rr?fmt(h.rr.effPE,2):'–')+'</td>'+

@@ -33,7 +33,7 @@ export type LifecycleOutput = {
   dominance: { buy: number; sell: number; gap: number; side: "BUY" | "SELL" | "NEUTRAL" };
   spartan: { up: number; dn: number };
   surfing: { up: number; dn: number };
-  rsi: { m1: number | null; m5: number | null };
+  rsi: { m1: number | null; m5: number | null; m15: number | null };
   rr: { rawCE: number; effCE: number; rawPE: number; effPE: number };
   explanation: string;
 };
@@ -59,7 +59,7 @@ type SignalInput = {
   // timeframe suggestion signals
   s1rec: string; s1conf: number | null; s1rsi: number | null;
   s5rec: string; s5conf: number | null; s5rsi: number | null;
-  s15rec: string; s15conf: number | null;
+  s15rec: string; s15conf: number | null; s15rsi: number | null;
   // breadth
   weightedMovePct: number;
   advancers: number;
@@ -85,9 +85,10 @@ export function computeLifecycle(input: SignalInput): LifecycleOutput {
   const { session, maxExposurePct } = getSession(min);
   const asof = new Date().toISOString();
 
-  const { s1rec, s1conf, s1rsi, s5rec, s5conf, s5rsi, s15rec } = input;
+  const { s1rec, s1conf, s1rsi, s5rec, s5conf, s5rsi, s15rec, s15rsi } = input;
   const rsi1 = s1rsi;
   const rsi5 = s5rsi;
+  const rsi15 = s15rsi;
 
   // ── SCSE composite score (0-100) ─────────────────────────────────
   // S: Spartan flow alignment (0-25)
@@ -210,7 +211,7 @@ export function computeLifecycle(input: SignalInput): LifecycleOutput {
     parts.push(`TF conflict: ${longCount}L vs ${shortCount}S`);
     if (Math.abs(input.weightedMovePct) < 0.1) parts.push("breadth flat");
   } else {
-    parts.push(`RSI 1m:${rsi1?.toFixed(0) ?? "-"} 5m:${rsi5?.toFixed(0) ?? "-"}`);
+    parts.push(`RSI 1m:${rsi1?.toFixed(0) ?? "-"} 5m:${rsi5?.toFixed(0) ?? "-"} 15m:${rsi15?.toFixed(0) ?? "-"}`);
     if (state === "CE_EDGE") parts.push("CE RR leads");
     if (state === "PE_EDGE") parts.push("PE RR leads");
   }
@@ -228,7 +229,7 @@ export function computeLifecycle(input: SignalInput): LifecycleOutput {
     dominance: { buy: buyDom, sell: sellDom, gap: domGap, side: domSide },
     spartan: { up: input.spartanUp, dn: input.spartanDn },
     surfing: { up: input.surfingUp, dn: input.surfingDn },
-    rsi: { m1: rsi1 != null ? Math.round(rsi1 * 10) / 10 : null, m5: rsi5 != null ? Math.round(rsi5 * 10) / 10 : null },
+    rsi: { m1: rsi1 != null ? Math.round(rsi1 * 10) / 10 : null, m5: rsi5 != null ? Math.round(rsi5 * 10) / 10 : null, m15: rsi15 != null ? Math.round(rsi15 * 10) / 10 : null },
     rr: { rawCE: rawRR, effCE, rawPE: rawRR, effPE },
     explanation: parts.join(" | "),
   };
