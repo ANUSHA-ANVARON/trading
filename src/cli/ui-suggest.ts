@@ -258,8 +258,8 @@ tr:hover td{background:rgba(232,236,246,.025)}
     </div>
   </div>
 
-  <!-- Metrics row -->
-  <div style="display:grid;grid-template-columns:repeat(8,1fr);gap:8px;margin-bottom:12px;font-size:11px;text-align:center" id="lcMetrics">
+  <!-- Metrics row 1: scores & flow -->
+  <div style="display:grid;grid-template-columns:repeat(8,1fr);gap:8px;margin-bottom:6px;font-size:11px;text-align:center" id="lcMetrics">
     <div><div style="color:var(--m);font-size:10px;margin-bottom:2px">SCSE</div><div class="mono" id="lcScse" style="font-size:18px;font-weight:800">–</div></div>
     <div><div style="color:var(--m);font-size:10px;margin-bottom:2px">RSI 1m</div><div class="mono" id="lcRsi1" style="font-size:16px;font-weight:700">–</div></div>
     <div><div style="color:var(--m);font-size:10px;margin-bottom:2px">RSI 5m</div><div class="mono" id="lcRsi5" style="font-size:16px;font-weight:700">–</div></div>
@@ -268,6 +268,24 @@ tr:hover td{background:rgba(232,236,246,.025)}
     <div><div style="color:var(--m);font-size:10px;margin-bottom:2px">SP↑/↓</div><div class="mono" id="lcSp" style="font-size:13px;font-weight:700">–</div></div>
     <div><div style="color:var(--m);font-size:10px;margin-bottom:2px">SU↑/↓</div><div class="mono" id="lcSu" style="font-size:13px;font-weight:700">–</div></div>
     <div><div style="color:var(--m);font-size:10px;margin-bottom:2px">Eff RR CE/PE</div><div class="mono" id="lcRr" style="font-size:12px;font-weight:700">–</div></div>
+  </div>
+  <!-- Metrics row 2: Bollinger Bands %B per timeframe -->
+  <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px;font-size:11px;text-align:center">
+    <div style="background:var(--b1);border-radius:6px;padding:6px 4px">
+      <div style="color:var(--m);font-size:10px;margin-bottom:2px">BB %B · 1m</div>
+      <div class="mono" id="lcBb1" style="font-size:15px;font-weight:700">–</div>
+      <div id="lcBb1Bar" style="height:4px;border-radius:2px;margin-top:4px;background:var(--b2)"></div>
+    </div>
+    <div style="background:var(--b1);border-radius:6px;padding:6px 4px">
+      <div style="color:var(--m);font-size:10px;margin-bottom:2px">BB %B · 5m</div>
+      <div class="mono" id="lcBb5" style="font-size:15px;font-weight:700">–</div>
+      <div id="lcBb5Bar" style="height:4px;border-radius:2px;margin-top:4px;background:var(--b2)"></div>
+    </div>
+    <div style="background:var(--b1);border-radius:6px;padding:6px 4px">
+      <div style="color:var(--m);font-size:10px;margin-bottom:2px">BB %B · 15m</div>
+      <div class="mono" id="lcBb15" style="font-size:15px;font-weight:700">–</div>
+      <div id="lcBb15Bar" style="height:4px;border-radius:2px;margin-top:4px;background:var(--b2)"></div>
+    </div>
   </div>
 
   <!-- History log -->
@@ -429,6 +447,42 @@ tr:hover td{background:rgba(232,236,246,.025)}
   <div id="chainNote" class="note">Waiting for chain…</div>
 </div>
 
+<!-- PREDICTION LOG -->
+<div class="card" id="predCard">
+  <div class="ctog open" id="predTog">
+    <div class="ct" style="margin:0">Prediction Engine <span class="hint">confluence-gated trade signals — 2+ TFs · RSI · BB · breadth · lifecycle state</span></div>
+    <span class="chev">▼</span>
+  </div>
+  <div class="cbody" id="predBody">
+    <!-- Summary stats bar -->
+    <div id="predStats" style="display:flex;gap:12px;flex-wrap:wrap;margin:8px 0 12px;align-items:center"></div>
+    <!-- Table -->
+    <div style="overflow:auto;max-height:400px">
+      <table class="mono" style="width:100%;border-collapse:collapse;font-size:12px" id="predTable">
+        <thead style="position:sticky;top:0;background:var(--bg2);z-index:1">
+          <tr>
+            <th style="text-align:left;padding:4px 6px">Time (IST)</th>
+            <th style="padding:4px 6px">TF</th>
+            <th style="padding:4px 6px">Dir</th>
+            <th style="padding:4px 6px">Entry</th>
+            <th style="padding:4px 6px">Target</th>
+            <th style="padding:4px 6px">SL</th>
+            <th style="padding:4px 6px">Conf</th>
+            <th style="padding:4px 6px">RSI 5m/15m</th>
+            <th style="padding:4px 6px">BB %B 5m</th>
+            <th style="padding:4px 6px">TFs</th>
+            <th style="padding:4px 6px">Lifecycle</th>
+            <th style="padding:4px 6px">Status</th>
+            <th style="padding:4px 6px">P&amp;L pts</th>
+          </tr>
+        </thead>
+        <tbody id="predBody2"></tbody>
+      </table>
+    </div>
+    <div id="predNote" class="note">Engine warming up — waiting for confluence signals…</div>
+  </div>
+</div>
+
 <!-- SIGNAL HISTORY -->
 <div class="card">
   <div class="ctog open" id="sigTog">
@@ -483,7 +537,7 @@ function coll(tId,bId){
     else{b.classList.add('cls');b.style.maxHeight='0';}
   });
 }
-coll('sigTog','sigBody'); coll('logTog','logBody'); coll('rsnTog','rsnBody'); coll('lcHistTog','lcHistBody');
+coll('sigTog','sigBody'); coll('logTog','logBody'); coll('rsnTog','rsnBody'); coll('lcHistTog','lcHistBody'); coll('predTog','predBody');
 
 // ── Utils ──────────────────────────────────────────────────────────
 function fmt(n,d){if(n==null||!isFinite(n))return '-';return Number(n).toFixed(d!=null?d:2);}
@@ -601,6 +655,19 @@ function renderLifecycle(obj){
   var sp=e('lcSp');if(sp&&lc.spartan)sp.textContent=lc.spartan.up+'↑ '+lc.spartan.dn+'↓';
   var su=e('lcSu');if(su&&lc.surfing)su.textContent=lc.surfing.up+'↑ '+lc.surfing.dn+'↓';
   var rr=e('lcRr');if(rr&&lc.rr)rr.textContent=fmt(lc.rr.effCE,2)+' / '+fmt(lc.rr.effPE,2);
+  // BB %B per TF (from timeframes object)
+  var tfsObj=obj.timeframes||{};
+  function setBbCell(elId,barId,tf){
+    var bb=(tfsObj[tf]&&tfsObj[tf].signals)?tfsObj[tf].signals.bb:null;
+    var el2=e(elId),bar=e(barId);
+    if(!el2)return;
+    if(!bb){el2.textContent='–';el2.style.color='var(--m)';if(bar)bar.style.background='var(--b2)';return;}
+    var pctB=bb.pctB,pct=Math.round(pctB*100);
+    el2.textContent=pct+'%';
+    el2.style.color=pctB>0.8?'var(--r2)':pctB<0.2?'var(--g2)':pctB>0.5?'var(--g)':'var(--m)';
+    if(bar){var w=Math.round(pctB*100);bar.style.background=pctB>0.8?'var(--r)':pctB<0.2?'var(--g)':'var(--acc)';bar.style.width=w+'%';}
+  }
+  setBbCell('lcBb1','lcBb1Bar','1m');setBbCell('lcBb5','lcBb5Bar','5m');setBbCell('lcBb15','lcBb15Bar','15m');
 
   // History table
   var hist=obj.lifecycleHistory||[];
@@ -634,6 +701,75 @@ function renderLifecycle(obj){
         tb.appendChild(tr);
       }
     } else { if(hn)hn.textContent='Waiting for lifecycle history…'; }
+  }
+}
+
+// ── Prediction Log ─────────────────────────────────────────────────
+function renderPredLog(arr){
+  var tbody=e('predBody2'),note=e('predNote'),stats=e('predStats');
+  if(!tbody)return;
+  arr=arr||[];
+
+  // Stats bar
+  if(stats){
+    var total=arr.length,pending=0,hits=0,stops=0,expired=0,totalPnl=0,resolvedCount=0;
+    for(var i=0;i<arr.length;i++){
+      var p=arr[i];
+      if(p.outcome==='PENDING')pending++;
+      else if(p.outcome==='TARGET_HIT'){hits++;if(p.pnlPoints!=null){totalPnl+=p.pnlPoints;resolvedCount++;}}
+      else if(p.outcome==='STOP_HIT'){stops++;if(p.pnlPoints!=null){totalPnl+=p.pnlPoints;resolvedCount++;}}
+      else if(p.outcome==='EXPIRED'){expired++;if(p.pnlPoints!=null){totalPnl+=p.pnlPoints;resolvedCount++;}}
+    }
+    var winRate=hits+stops>0?Math.round(hits/(hits+stops)*100):null;
+    var avgPnl=resolvedCount>0?+(totalPnl/resolvedCount).toFixed(1):null;
+    stats.innerHTML=
+      '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">'+
+      '<span style="font-size:11px;padding:3px 10px;border-radius:999px;background:rgba(124,58,237,.14);border:1px solid rgba(124,58,237,.3);color:var(--acc2)">'+total+' total</span>'+
+      '<span style="font-size:11px;padding:3px 10px;border-radius:999px;background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.3);color:var(--a2)">'+pending+' pending</span>'+
+      (winRate!=null?'<span style="font-size:11px;padding:3px 10px;border-radius:999px;background:'+(winRate>=55?'rgba(34,197,94,.12)':'rgba(239,68,68,.12)')+';border:1px solid '+(winRate>=55?'rgba(34,197,94,.35)':'rgba(239,68,68,.35)')+';color:'+(winRate>=55?'var(--g2)':'var(--r2)')+'">Win '+winRate+'%</span>':'')+
+      '<span style="font-size:11px;padding:3px 10px;border-radius:999px;background:rgba(34,197,94,.1);border:1px solid rgba(34,197,94,.3);color:var(--g2)">'+hits+' hit</span>'+
+      '<span style="font-size:11px;padding:3px 10px;border-radius:999px;background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);color:var(--r2)">'+stops+' stopped</span>'+
+      (avgPnl!=null?'<span style="font-size:11px;padding:3px 10px;border-radius:999px;background:var(--b1);border:1px solid var(--b2);color:'+(avgPnl>=0?'var(--g2)':'var(--r2)')+'">Avg P&amp;L '+(avgPnl>=0?'+':'')+avgPnl+' pts</span>':'')+
+      '</div>';
+  }
+
+  tbody.innerHTML='';
+  if(!arr.length){if(note)note.textContent='Engine warming up — waiting for confluence signals…';return;}
+  if(note)note.textContent='';
+
+  for(var j=0;j<arr.length;j++){
+    var r=arr[j];
+    var tr2=document.createElement('tr');
+    var isLong=r.direction==='LONG';
+    var oc=r.outcome||'PENDING';
+    var ocBg=oc==='TARGET_HIT'?'rgba(34,197,94,.07)':oc==='STOP_HIT'?'rgba(239,68,68,.07)':oc==='EXPIRED'?'rgba(255,255,255,.03)':'rgba(245,158,11,.05)';
+    tr2.style.background=ocBg;
+    var rsi5v=r.signals&&r.signals.rsi5m!=null?r.signals.rsi5m.toFixed(0):'–';
+    var rsi15v=r.signals&&r.signals.rsi15m!=null?r.signals.rsi15m.toFixed(0):'–';
+    var bb5v=r.signals&&r.signals.bbPctB5m!=null?Math.round(r.signals.bbPctB5m*100)+'%':'–';
+    var confPct=r.confidence!=null?Math.round(r.confidence*100)+'%':'–';
+    var pnlStr=r.pnlPoints!=null?(r.pnlPoints>=0?'<span style="color:var(--g2)">+'+r.pnlPoints+'</span>':'<span style="color:var(--r2)">'+r.pnlPoints+'</span>'):'<span style="color:var(--a2)">…</span>';
+    var ocPill=oc==='TARGET_HIT'?'<span style="color:var(--g2);font-weight:700">✓ HIT</span>':
+               oc==='STOP_HIT'?'<span style="color:var(--r2);font-weight:700">✗ STOP</span>':
+               oc==='EXPIRED'?'<span style="color:var(--m)">⏱ EXPIRED</span>':
+               '<span style="color:var(--a2);font-weight:700">● LIVE</span>';
+    var dirPill='<span style="font-weight:800;color:'+(isLong?'var(--g2)':'var(--r2)')+';">'+(isLong?'▲ LONG':'▼ SHORT')+'</span>';
+    var lcStr=String(r.lifecycle||'–').replace(/_/g,' ');
+    tr2.innerHTML=
+      '<td style="white-space:nowrap;padding:4px 6px;font-size:11px">'+toIST(r.asof)+'</td>'+
+      '<td style="padding:4px 6px;text-align:center"><span style="font-size:11px;padding:1px 6px;border-radius:4px;background:var(--b2)">'+String(r.timeframe||'–')+'</span></td>'+
+      '<td style="padding:4px 6px;text-align:center">'+dirPill+'</td>'+
+      '<td style="padding:4px 6px;text-align:right">'+fmt(r.entryPrice,2)+'</td>'+
+      '<td style="padding:4px 6px;text-align:right;color:var(--g2)">'+fmt(r.targetPrice,2)+'</td>'+
+      '<td style="padding:4px 6px;text-align:right;color:var(--r2)">'+fmt(r.stopPrice,2)+'</td>'+
+      '<td style="padding:4px 6px;text-align:center">'+confPct+'</td>'+
+      '<td style="padding:4px 6px;text-align:center">'+rsi5v+' / '+rsi15v+'</td>'+
+      '<td style="padding:4px 6px;text-align:center">'+bb5v+'</td>'+
+      '<td style="padding:4px 6px;text-align:center">'+(r.signals&&r.signals.tfAgree!=null?r.signals.tfAgree+'/3':'–')+'</td>'+
+      '<td style="padding:4px 6px;font-size:10px;color:var(--m)">'+lcStr+'</td>'+
+      '<td style="padding:4px 6px;text-align:center">'+ocPill+'</td>'+
+      '<td style="padding:4px 6px;text-align:right">'+pnlStr+'</td>';
+    tbody.appendChild(tr2);
   }
 }
 
@@ -859,6 +995,7 @@ function applyUpdate(obj){
   // All new sections
   renderPiv(obj.pivotLevels||null);
   renderPredRms(obj);
+  renderPredLog(obj.predictionLog||[]);
   renderSH(obj.stockSignalHistory||[]);
   renderLifecycle(obj);
   var score=calcScore(obj);updateGauge(score);updateScoreFacts(obj,score);

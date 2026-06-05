@@ -68,6 +68,29 @@ type StockSignalHistoryEntry = {
   lastSurfingDn: string | null;
 };
 
+type PredictionEntry = {
+  id: string;
+  asof: string;
+  timeframe: "1m" | "5m" | "15m";
+  direction: "LONG" | "SHORT";
+  entryPrice: number;
+  targetPrice: number;
+  stopPrice: number;
+  confidence: number;
+  lifecycle: string;
+  session: string;
+  signals: {
+    rsi1m: number | null; rsi5m: number | null; rsi15m: number | null;
+    bbPctB5m: number | null; bbPctB15m: number | null;
+    spartanNet: number; surfNet: number; breadthMove: number;
+    tfAgree: number; // how many TFs agreed (1-3)
+  };
+  outcome: "PENDING" | "TARGET_HIT" | "STOP_HIT" | "EXPIRED";
+  outcomePrice: number | null;
+  outcomeAt: string | null;
+  pnlPoints: number | null;
+};
+
 type OptionSelection = {
   expiry: string;
   atmStrike: number;
@@ -673,11 +696,12 @@ async function main() {
 
   // Stock flow tracking for Spartan/Surfing labeling.
   // We bucket by 1 minute and compute traded value using volume deltas × last_price.
-  // SPARTAN: >= 100cr INR per 1m bucket.
-  // SURF_TRIGGER: >= 50cr needed to stamp lastBuy/lastSell/lastSurfingUp/lastSurfingDn.
+  // SPARTAN: >= 50cr INR per 1m bucket.
+  // Separate stamp thresholds: BUY/SELL direction flip = 5cr, SURFING label = 10cr.
   const CRORE_INR = 10_000_000;
-  const SPARTAN_THRESHOLD_INR = 100 * CRORE_INR;
-  const SURF_TRIGGER_THRESHOLD_CR = 50; // crores — min turnover to register a BUY/SELL/SURF signal stamp
+  const SPARTAN_THRESHOLD_INR = 50 * CRORE_INR;
+  const BUY_SELL_TRIGGER_CR = 5;   // crores — min turnover to stamp lastBuy / lastSell
+  const SURF_TRIGGER_CR = 10;      // crores — min turnover to stamp lastSurfingUp / lastSurfingDn
 
   type StockFlowState = {
     bucketStartMs: number | null;
@@ -703,6 +727,12 @@ async function main() {
   let prevDayCandle: { h: number; l: number; c: number } | null = null;
   const lifecycleHistory: LifecycleOutput[] = [];
   const MAX_LIFECYCLE_HISTORY = 60;
+
+  const predictionLog: PredictionEntry[] = [];
+  const MAX_PREDICTIONS = 200;
+  let lastPredLong = 0; // ms timestamp of last LONG prediction fired
+  let lastPredShort = 0; // ms timestamp of last SHORT prediction fired
+  const PRED_DEBOUNCE_MS = 10 * 60_000; // 10 min — don't re-fire same direction within this window
 
   let spreadLegs:
     | null
@@ -926,6 +956,7 @@ async function main() {
     pivotLevels: PivotLevelsOutput | null;
     lifecycle: LifecycleOutput | null;
     lifecycleHistory: LifecycleOutput[];
+    predictionLog: PredictionEntry[];
     rms: { maxDailyLoss: number | null; maxRiskPerTrade: number | null };
     options: any;
     news: any;
@@ -1142,17 +1173,16 @@ async function main() {
       };
       const tsNow = new Date().toISOString();
       const turnoverCrNow = r.turnoverCr_1m ?? 0;
-      const meetsFlowMin = turnoverCrNow >= SURF_TRIGGER_THRESHOLD_CR;
 
-      // lastBuy / lastSell: genuine direction flip AND turnover >= 50cr
-      if (prevDir !== "UP" && r.dir === "UP" && meetsFlowMin) hist.lastBuy = tsNow;
-      if (prevDir !== "DOWN" && r.dir === "DOWN" && meetsFlowMin) hist.lastSell = tsNow;
-      // SPARTAN stamps: label newly entered (SPARTAN already implies >= 100cr, no extra check needed)
+      // lastBuy / lastSell: genuine direction flip AND turnover >= 5cr
+      if (prevDir !== "UP" && r.dir === "UP" && turnoverCrNow >= BUY_SELL_TRIGGER_CR) hist.lastBuy = tsNow;
+      if (prevDir !== "DOWN" && r.dir === "DOWN" && turnoverCrNow >= BUY_SELL_TRIGGER_CR) hist.lastSell = tsNow;
+      // SPARTAN stamps: label newly entered (SPARTAN already implies >= 50cr threshold)
       if (prevLabel !== "SPARTAN_UP" && r.label === "SPARTAN_UP") hist.lastSpartanUp = tsNow;
       if (prevLabel !== "SPARTAN_DN" && r.label === "SPARTAN_DN") hist.lastSpartanDn = tsNow;
-      // SURFING stamps: label newly entered AND turnover >= 50cr
-      if (prevLabel !== "SURFINGUP" && r.label === "SURFINGUP" && meetsFlowMin) hist.lastSurfingUp = tsNow;
-      if (prevLabel !== "SURFINGDN" && r.label === "SURFINGDN" && meetsFlowMin) hist.lastSurfingDn = tsNow;
+      // SURFING stamps: label newly entered AND turnover >= 10cr
+      if (prevLabel !== "SURFINGUP" && r.label === "SURFINGUP" && turnoverCrNow >= SURF_TRIGGER_CR) hist.lastSurfingUp = tsNow;
+      if (prevLabel !== "SURFINGDN" && r.label === "SURFINGDN" && turnoverCrNow >= SURF_TRIGGER_CR) hist.lastSurfingDn = tsNow;
       stockSignalHistory.set(r.key, hist);
 
       lastStockState.set(token, state);
@@ -1747,6 +1777,106 @@ async function main() {
       lifecycleHistory.splice(0, lifecycleHistory.length - MAX_LIFECYCLE_HISTORY);
     }
 
+    // ── Prediction engine ─────────────────────────────────────────
+    // Step 1: resolve outcomes for pending predictions
+    if (futLtp !== null && Number.isFinite(futLtp)) {
+      for (const p of predictionLog) {
+        if (p.outcome !== "PENDING") continue;
+        const ageMs = Date.now() - new Date(p.asof).getTime();
+        const expiryMs = p.timeframe === "1m" ? 15 * 60_000 : p.timeframe === "5m" ? 45 * 60_000 : 90 * 60_000;
+        const nowTs = new Date().toISOString();
+        if (p.direction === "LONG") {
+          if (futLtp >= p.targetPrice) { p.outcome = "TARGET_HIT"; p.outcomePrice = futLtp; p.outcomeAt = nowTs; p.pnlPoints = +(futLtp - p.entryPrice).toFixed(2); }
+          else if (futLtp <= p.stopPrice) { p.outcome = "STOP_HIT"; p.outcomePrice = futLtp; p.outcomeAt = nowTs; p.pnlPoints = +(futLtp - p.entryPrice).toFixed(2); }
+          else if (ageMs >= expiryMs) { p.outcome = "EXPIRED"; p.outcomePrice = futLtp; p.outcomeAt = nowTs; p.pnlPoints = +(futLtp - p.entryPrice).toFixed(2); }
+        } else {
+          if (futLtp <= p.targetPrice) { p.outcome = "TARGET_HIT"; p.outcomePrice = futLtp; p.outcomeAt = nowTs; p.pnlPoints = +(p.entryPrice - futLtp).toFixed(2); }
+          else if (futLtp >= p.stopPrice) { p.outcome = "STOP_HIT"; p.outcomePrice = futLtp; p.outcomeAt = nowTs; p.pnlPoints = +(p.entryPrice - futLtp).toFixed(2); }
+          else if (ageMs >= expiryMs) { p.outcome = "EXPIRED"; p.outcomePrice = futLtp; p.outcomeAt = nowTs; p.pnlPoints = +(p.entryPrice - futLtp).toFixed(2); }
+        }
+      }
+    }
+
+    // Step 2: check if a new prediction should fire
+    if (futLtp !== null && Number.isFinite(futLtp)) {
+      const nowMs = Date.now();
+      const advDecRatio = (breadth.decliners ?? 0) > 0 ? (breadth.advancers ?? 0) / (breadth.decliners ?? 1) : ((breadth.advancers ?? 0) > 0 ? 5 : 1);
+      const rsi5 = typeof s5.signals?.rsi14 === "number" ? s5.signals.rsi14 : null;
+      const rsi15 = typeof s15.signals?.rsi14 === "number" ? s15.signals.rsi14 : null;
+      const bb5 = s5.signals?.bb ?? null;
+      const bb15 = s15.signals?.bb ?? null;
+
+      for (const dir of ["LONG", "SHORT"] as const) {
+        const lastFired = dir === "LONG" ? lastPredLong : lastPredShort;
+        if (nowMs - lastFired < PRED_DEBOUNCE_MS) continue;
+
+        // Gate 1: lifecycle must be in a clean/edge state matching direction
+        const validStates = dir === "LONG" ? ["CLEAN_BULLISH_FLOW", "CE_EDGE"] : ["CLEAN_BEARISH_FLOW", "PE_EDGE"];
+        if (!validStates.includes(lifecycle.state)) continue;
+
+        // Gate 2: at least 2 of 3 TFs agree
+        const tfRecs = [s1.recommendation, s5.recommendation, s15.recommendation];
+        const tfAgree = tfRecs.filter((r) => r === dir).length;
+        if (tfAgree < 2) continue;
+
+        // Gate 3: RSI confirms on 5m or 15m
+        const rsiOk = dir === "LONG"
+          ? ((rsi5 !== null && rsi5 >= 52) || (rsi15 !== null && rsi15 >= 50))
+          : ((rsi5 !== null && rsi5 <= 48) || (rsi15 !== null && rsi15 <= 50));
+        if (!rsiOk) continue;
+
+        // Gate 4: BB confirms on 5m or 15m (price not at extreme, in right half of band)
+        const bbOk = dir === "LONG"
+          ? ((bb5 && bb5.pctB > 0.45 && bb5.pctB < 0.92) || (bb15 && bb15.pctB > 0.45 && bb15.pctB < 0.92))
+          : ((bb5 && bb5.pctB < 0.55 && bb5.pctB > 0.08) || (bb15 && bb15.pctB < 0.55 && bb15.pctB > 0.08));
+        if (!bbOk) continue;
+
+        // Gate 5: breadth supports
+        const breadthOk = dir === "LONG"
+          ? ((breadth.weighted_move_pct ?? 0) > 0.05 && advDecRatio > 1.0)
+          : ((breadth.weighted_move_pct ?? 0) < -0.05 && advDecRatio < 1.0);
+        if (!breadthOk) continue;
+
+        // All gates passed — fire prediction
+        const bestTfSrc = [s15, s5, s1].find((s) => s.recommendation === dir);
+        const tfLabel = (bestTfSrc?.timeframe ?? "5m") as "1m" | "5m" | "15m";
+        const tpPoints = futLtp * (tpPct / 100);
+        const slPoints = futLtp * (slPct / 100);
+
+        const entry: PredictionEntry = {
+          id: `${nowMs}-${dir}`,
+          asof: new Date().toISOString(),
+          timeframe: tfLabel,
+          direction: dir,
+          entryPrice: futLtp,
+          targetPrice: +(dir === "LONG" ? futLtp + tpPoints : futLtp - tpPoints).toFixed(2),
+          stopPrice: +(dir === "LONG" ? futLtp - slPoints : futLtp + slPoints).toFixed(2),
+          confidence: Math.max(Number(s5.confidence ?? 0), Number(s15.confidence ?? 0)),
+          lifecycle: lifecycle.state,
+          session: lifecycle.session,
+          signals: {
+            rsi1m: typeof s1.signals?.rsi14 === "number" ? s1.signals.rsi14 : null,
+            rsi5m: rsi5,
+            rsi15m: rsi15,
+            bbPctB5m: bb5?.pctB ?? null,
+            bbPctB15m: bb15?.pctB ?? null,
+            spartanNet: spartanUp - spartanDn,
+            surfNet: surfingUp - surfingDn,
+            breadthMove: breadth.weighted_move_pct ?? 0,
+            tfAgree,
+          },
+          outcome: "PENDING",
+          outcomePrice: null,
+          outcomeAt: null,
+          pnlPoints: null,
+        };
+
+        predictionLog.unshift(entry);
+        if (predictionLog.length > MAX_PREDICTIONS) predictionLog.pop();
+        if (dir === "LONG") lastPredLong = nowMs; else lastPredShort = nowMs;
+      }
+    }
+
     return {
       asof: new Date().toISOString(),
       optionsOnly,
@@ -1764,6 +1894,7 @@ async function main() {
       pivotLevels,
       lifecycle,
       lifecycleHistory: [...lifecycleHistory],
+      predictionLog: [...predictionLog],
       rms: { maxDailyLoss: maxDailyLossVal, maxRiskPerTrade: maxRiskPerTradeVal },
       options: optionsSuggestion,
       news: news
