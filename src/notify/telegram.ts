@@ -111,78 +111,78 @@ async function sendTelegramPhoto(params: {
   }
 }
 
+// Load fonts from common system paths (Railway/Ubuntu ships DejaVu/Liberation by default)
+async function ensureFonts(): Promise<string> {
+  const { GlobalFonts } = await import("@napi-rs/canvas");
+  const dirs = [
+    "/usr/share/fonts/truetype/dejavu",
+    "/usr/share/fonts/truetype/liberation",
+    "/usr/share/fonts/truetype/ubuntu",
+    "/usr/share/fonts/truetype/freefont",
+    "/usr/share/fonts/truetype",
+    "/usr/share/fonts",
+    "/usr/local/share/fonts",
+  ];
+  for (const d of dirs) {
+    try { GlobalFonts.loadFontsFromDir(d); } catch {}
+  }
+  // Try to detect what's registered; prefer modern → classic fallbacks
+  const families = ["Ubuntu", "Liberation Sans", "DejaVu Sans", "FreeSans", "sans-serif"];
+  const list: string[] = (GlobalFonts as any).families ?? [];
+  for (const fam of families) {
+    if (list.length === 0 || list.some((f: string) => f.toLowerCase().includes(fam.toLowerCase().split(" ")[0]))) {
+      return fam;
+    }
+  }
+  return "sans-serif";
+}
+
+function rr(ctx: any, x: number, y: number, w: number, h: number, rad: number) {
+  const r = Math.min(rad, w / 2, h / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+  ctx.lineTo(x + w, y + h - r);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  ctx.lineTo(x + r, y + h);
+  ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+  ctx.lineTo(x, y + r);
+  ctx.quadraticCurveTo(x, y, x + r, y);
+  ctx.closePath();
+}
+
+function toIst(iso: string): string {
+  const d = new Date(iso);
+  const ist = new Date(d.getTime() + 5.5 * 3600_000);
+  return String(ist.getUTCHours()).padStart(2, "0") + ":" + String(ist.getUTCMinutes()).padStart(2, "0") + " IST";
+}
+
 async function renderAlertCardPng(params: { title: string; lines: string[] }): Promise<Uint8Array> {
   const { createCanvas } = await import("@napi-rs/canvas");
+  const font = await ensureFonts();
 
-  const width = 820;
-  const paddingX = 26;
-  const paddingY = 22;
-  const lineH = 28;
-  const titleH = 42;
-  const height = paddingY * 2 + titleH + Math.max(1, params.lines.length) * lineH;
-
-  const canvas = createCanvas(width, height);
+  const W = 820, pad = 28;
+  const lineH = 32, titleH = 52;
+  const H = pad * 2 + titleH + Math.max(1, params.lines.length) * lineH + 16;
+  const canvas = createCanvas(W, H);
   const ctx = canvas.getContext("2d");
 
-  // Background
-  ctx.fillStyle = "#05060a";
-  ctx.fillRect(0, 0, width, height);
+  ctx.fillStyle = "#050810"; ctx.fillRect(0, 0, W, H);
+  rr(ctx, 12, 10, W - 24, H - 20, 16);
+  ctx.fillStyle = "#0d1117"; ctx.fill();
+  ctx.lineWidth = 1.5; ctx.strokeStyle = "#b48a1a"; ctx.stroke();
 
-  // Panel
-  const r = 18;
-  const panelX = 16;
-  const panelY = 12;
-  const panelW = width - 32;
-  const panelH = height - 24;
+  // accent strip
+  rr(ctx, 12, 10, W - 24, 6, 4);
+  ctx.fillStyle = "#b48a1a"; ctx.fill();
 
-  const roundRect = (x: number, y: number, w: number, h: number, rad: number) => {
-    ctx.beginPath();
-    ctx.moveTo(x + rad, y);
-    ctx.lineTo(x + w - rad, y);
-    ctx.quadraticCurveTo(x + w, y, x + w, y + rad);
-    ctx.lineTo(x + w, y + h - rad);
-    ctx.quadraticCurveTo(x + w, y + h, x + w - rad, y + h);
-    ctx.lineTo(x + rad, y + h);
-    ctx.quadraticCurveTo(x, y + h, x, y + h - rad);
-    ctx.lineTo(x, y + rad);
-    ctx.quadraticCurveTo(x, y, x + rad, y);
-    ctx.closePath();
-  };
-
-  roundRect(panelX, panelY, panelW, panelH, r);
-  ctx.fillStyle = "#0c0f16";
-  ctx.fill();
-
-  ctx.lineWidth = 2;
-  ctx.strokeStyle = "#b48a1a";
-  ctx.stroke();
-
-  // Title + icon
-  const iconX = panelX + paddingX;
-  const iconY = panelY + paddingY + 6;
-  ctx.fillStyle = "#fbbf24";
-  ctx.beginPath();
-  ctx.moveTo(iconX + 12, iconY);
-  ctx.lineTo(iconX + 24, iconY + 22);
-  ctx.lineTo(iconX, iconY + 22);
-  ctx.closePath();
-  ctx.fill();
-  ctx.fillStyle = "#111827";
-  ctx.font = "bold 14px system-ui, Segoe UI, Arial";
-  ctx.fillText("!", iconX + 9.5, iconY + 17);
-
-  ctx.fillStyle = "#fbbf24";
-  ctx.font = "800 28px system-ui, Segoe UI, Arial";
-  ctx.fillText(params.title.toUpperCase(), iconX + 36, panelY + paddingY + 28);
-
-  // Lines
-  ctx.fillStyle = "#e8ecf6";
-  ctx.font = "700 20px system-ui, Segoe UI, Arial";
-  const startY = panelY + paddingY + titleH;
+  ctx.fillStyle = "#fbbf24"; ctx.font = `800 26px "${font}"`;
+  ctx.fillText(params.title.toUpperCase(), pad + 12, pad + titleH - 10);
+  ctx.fillStyle = "#d1d5db"; ctx.font = `500 18px "${font}"`;
   for (let i = 0; i < params.lines.length; i++) {
-    ctx.fillText(params.lines[i], panelX + paddingX, startY + i * lineH + 10);
+    ctx.fillText(params.lines[i], pad + 12, pad + titleH + i * lineH + 20);
   }
-
   return canvas.toBuffer("image/png");
 }
 
@@ -249,95 +249,164 @@ async function renderMarketConditionCardPng(params: {
   asof: string;
 }): Promise<Uint8Array> {
   const { createCanvas } = await import("@napi-rs/canvas");
+  const font = await ensureFonts();
   const meta = CONDITION_META[params.condition];
-  const W = 820, H = 320, pad = 24;
 
+  // ── Canvas setup ────────────────────────────────────────────────────────
+  const W = 820, H = 430;
   const canvas = createCanvas(W, H);
   const ctx = canvas.getContext("2d");
 
-  // Background
-  ctx.fillStyle = "#05060a"; ctx.fillRect(0, 0, W, H);
+  // Outer bg
+  ctx.fillStyle = "#050810"; ctx.fillRect(0, 0, W, H);
 
-  // Panel
-  const pX = 14, pY = 10, pW = W - 28, pH = H - 20, r = 16;
-  ctx.beginPath();
-  ctx.moveTo(pX + r, pY); ctx.lineTo(pX + pW - r, pY);
-  ctx.quadraticCurveTo(pX + pW, pY, pX + pW, pY + r);
-  ctx.lineTo(pX + pW, pY + pH - r); ctx.quadraticCurveTo(pX + pW, pY + pH, pX + pW - r, pY + pH);
-  ctx.lineTo(pX + r, pY + pH); ctx.quadraticCurveTo(pX, pY + pH, pX, pY + pH - r);
-  ctx.lineTo(pX, pY + r); ctx.quadraticCurveTo(pX, pY, pX + r, pY);
-  ctx.closePath();
+  // Card panel
+  const pX = 12, pY = 10, pW = W - 24, pH = H - 20;
+  rr(ctx, pX, pY, pW, pH, 18);
   ctx.fillStyle = meta.panelBg; ctx.fill();
-  ctx.lineWidth = 2; ctx.strokeStyle = meta.accent; ctx.stroke();
+  ctx.lineWidth = 1.5; ctx.strokeStyle = meta.accent + "99"; ctx.stroke();
 
-  // Top accent strip
-  ctx.save();
-  ctx.beginPath();
-  ctx.moveTo(pX + r, pY); ctx.lineTo(pX + pW - r, pY);
-  ctx.quadraticCurveTo(pX + pW, pY, pX + pW, pY + r);
-  ctx.lineTo(pX + pW, pY + 8);
-  ctx.lineTo(pX, pY + 8);
-  ctx.lineTo(pX, pY + r);
-  ctx.quadraticCurveTo(pX, pY, pX + r, pY);
-  ctx.closePath();
+  // ── Left accent bar ──────────────────────────────────────────────────────
+  const barW = 6;
+  rr(ctx, pX, pY, barW, pH, 10);
   ctx.fillStyle = meta.accent; ctx.fill();
-  ctx.restore();
 
-  const tX = pX + pad;
+  const lx = pX + barW + 20; // left content x
+  const rx = pX + pW - 22;   // right content x
 
-  // Header label
-  ctx.fillStyle = "#9ca3af"; ctx.font = "600 13px system-ui, Segoe UI, Arial";
-  ctx.fillText("NIFTY 50  ·  MARKET CONDITION", tX, pY + 40);
+  // ── Header row ──────────────────────────────────────────────────────────
+  ctx.fillStyle = "#4b5563"; ctx.font = `600 12px "${font}"`;
+  ctx.fillText("NIFTY 50  ·  MARKET CONDITION", lx, pY + 36);
 
-  // Time (right aligned)
-  const d = new Date(params.asof);
-  const ist = new Date(d.getTime() + 5.5 * 3600_000);
-  const timeStr = String(ist.getUTCHours()).padStart(2, "0") + ":" + String(ist.getUTCMinutes()).padStart(2, "0") + " IST";
-  ctx.fillStyle = "#6b7280"; ctx.font = "500 12px system-ui, Segoe UI, Arial";
+  ctx.fillStyle = "#374151"; ctx.font = `500 12px "${font}"`;
   ctx.textAlign = "right";
-  ctx.fillText(timeStr, pX + pW - pad, pY + 40);
+  ctx.fillText(toIst(params.asof), rx, pY + 36);
   ctx.textAlign = "left";
 
-  // Big condition text
-  ctx.fillStyle = meta.accent; ctx.font = `900 44px system-ui, Segoe UI, Arial`;
-  ctx.fillText(meta.icon + "  " + meta.label, tX, pY + 90);
+  // ── Big condition label ──────────────────────────────────────────────────
+  ctx.fillStyle = meta.accent; ctx.font = `800 48px "${font}"`;
+  ctx.fillText(meta.label, lx, pY + 98);
 
-  // Session
-  ctx.fillStyle = "#9ca3af"; ctx.font = "500 15px system-ui, Segoe UI, Arial";
-  ctx.fillText(params.session.replace(/_/g, " "), tX, pY + 116);
+  // session pill
+  const sess = params.session.replace(/_/g, " ");
+  ctx.fillStyle = "#111827";
+  rr(ctx, lx, pY + 110, ctx.measureText(sess).width + 24, 26, 13);
+  ctx.fill();
+  ctx.fillStyle = "#9ca3af"; ctx.font = `500 13px "${font}"`;
+  ctx.fillText(sess, lx + 12, pY + 128);
 
-  // Separator
+  // ── Divider ──────────────────────────────────────────────────────────────
   ctx.strokeStyle = "#1f2937"; ctx.lineWidth = 1;
-  ctx.beginPath(); ctx.moveTo(tX, pY + 130); ctx.lineTo(pX + pW - pad, pY + 130); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(lx, pY + 150); ctx.lineTo(rx, pY + 150); ctx.stroke();
 
-  // Metric chips — two rows of 4
-  const chips: Array<{ label: string; value: string; color?: string }> = [
-    { label: "RSI 1m",   value: params.rsi1m  != null ? params.rsi1m.toFixed(1)  : "–", color: params.rsi1m  != null ? (params.rsi1m  > 55 ? "#22c55e" : params.rsi1m  < 45 ? "#ef4444" : "#e8ecf6") : "#6b7280" },
-    { label: "RSI 5m",   value: params.rsi5m  != null ? params.rsi5m.toFixed(1)  : "–", color: params.rsi5m  != null ? (params.rsi5m  > 55 ? "#22c55e" : params.rsi5m  < 45 ? "#ef4444" : "#e8ecf6") : "#6b7280" },
-    { label: "RSI 15m",  value: params.rsi15m != null ? params.rsi15m.toFixed(1) : "–", color: params.rsi15m != null ? (params.rsi15m > 55 ? "#22c55e" : params.rsi15m < 45 ? "#ef4444" : "#e8ecf6") : "#6b7280" },
-    { label: "SCSE",     value: params.scse   != null ? String(params.scse)       : "–", color: params.scse   != null ? (params.scse   >= 65 ? "#22c55e" : params.scse   <= 35 ? "#ef4444" : "#e8ecf6") : "#6b7280" },
-    { label: "Breadth",  value: params.breadthMove != null ? (params.breadthMove >= 0 ? "+" : "") + params.breadthMove.toFixed(2) + "%" : "–", color: params.breadthMove != null ? (params.breadthMove > 0 ? "#22c55e" : params.breadthMove < 0 ? "#ef4444" : "#e8ecf6") : "#6b7280" },
-    { label: "Adv / Dec", value: `${params.advancers} / ${params.decliners}`, color: params.advancers > params.decliners ? "#22c55e" : params.decliners > params.advancers ? "#ef4444" : "#e8ecf6" },
-    { label: "Spartan",  value: `↑${params.spartanUp} ↓${params.spartanDn}`, color: params.spartanUp > params.spartanDn ? "#22c55e" : params.spartanDn > params.spartanUp ? "#ef4444" : "#e8ecf6" },
-    { label: "PCR",      value: params.pcr != null ? params.pcr.toFixed(2) : "–", color: params.pcr != null ? (params.pcr > 1.1 ? "#22c55e" : params.pcr < 0.9 ? "#ef4444" : "#e8ecf6") : "#6b7280" },
+  // ── RSI bars row ─────────────────────────────────────────────────────────
+  const rsiItems = [
+    { label: "RSI  1m", val: params.rsi1m },
+    { label: "RSI  5m", val: params.rsi5m },
+    { label: "RSI 15m", val: params.rsi15m },
+  ];
+  const barRowY = pY + 162;
+  const barTotalW = rx - lx;
+  const barSlotW = barTotalW / 3;
+  const barTrackW = barSlotW - 24;
+  const barH = 8;
+
+  for (let i = 0; i < rsiItems.length; i++) {
+    const bx = lx + i * barSlotW;
+    const val = rsiItems[i].val;
+    const pct = val != null ? Math.min(1, Math.max(0, val / 100)) : 0;
+    const col = val != null ? (val > 60 ? "#22c55e" : val < 40 ? "#ef4444" : "#f59e0b") : "#374151";
+
+    ctx.fillStyle = "#9ca3af"; ctx.font = `500 11px "${font}"`;
+    ctx.fillText(rsiItems[i].label, bx, barRowY + 12);
+
+    ctx.fillStyle = "#1f2937";
+    rr(ctx, bx, barRowY + 18, barTrackW, barH, 4); ctx.fill();
+    if (val != null) {
+      ctx.fillStyle = col;
+      rr(ctx, bx, barRowY + 18, barTrackW * pct, barH, 4); ctx.fill();
+    }
+
+    ctx.fillStyle = col; ctx.font = `700 22px "${font}"`;
+    ctx.fillText(val != null ? val.toFixed(1) : "–", bx, barRowY + 58);
+  }
+
+  // ── SCSE score (right side of RSI row) ───────────────────────────────────
+  const scseVal = params.scse ?? 0;
+  const scseCol = scseVal >= 65 ? "#22c55e" : scseVal <= 35 ? "#ef4444" : "#f59e0b";
+  const scseX = lx + 3 * barSlotW - 90;
+  ctx.fillStyle = "#9ca3af"; ctx.font = `500 11px "${font}"`;
+  ctx.fillText("SCSE", scseX, barRowY + 12);
+  // arc gauge
+  const cx3 = scseX + 34, cy3 = barRowY + 48, rad = 30;
+  ctx.strokeStyle = "#1f2937"; ctx.lineWidth = 6; ctx.lineCap = "round";
+  ctx.beginPath(); ctx.arc(cx3, cy3, rad, Math.PI * 0.75, Math.PI * 2.25); ctx.stroke();
+  const sweep = (scseVal / 100) * Math.PI * 1.5;
+  ctx.strokeStyle = scseCol; ctx.lineWidth = 6;
+  ctx.beginPath(); ctx.arc(cx3, cy3, rad, Math.PI * 0.75, Math.PI * 0.75 + sweep); ctx.stroke();
+  ctx.fillStyle = scseCol; ctx.font = `700 18px "${font}"`;
+  ctx.textAlign = "center"; ctx.fillText(String(scseVal), cx3, cy3 + 7); ctx.textAlign = "left";
+
+  // ── Divider ──────────────────────────────────────────────────────────────
+  ctx.strokeStyle = "#1f2937"; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(lx, pY + 242); ctx.lineTo(rx, pY + 242); ctx.stroke();
+
+  // ── Bottom metric chips (2 rows × 4) ─────────────────────────────────────
+  const chips: Array<{ label: string; value: string; color: string }> = [
+    {
+      label: "Breadth",
+      value: params.breadthMove != null ? (params.breadthMove >= 0 ? "+" : "") + params.breadthMove.toFixed(2) + "%" : "–",
+      color: params.breadthMove != null ? (params.breadthMove > 0.1 ? "#22c55e" : params.breadthMove < -0.1 ? "#ef4444" : "#f59e0b") : "#4b5563",
+    },
+    {
+      label: "Adv / Dec",
+      value: `${params.advancers}  /  ${params.decliners}`,
+      color: params.advancers > params.decliners ? "#22c55e" : params.decliners > params.advancers ? "#ef4444" : "#e8ecf6",
+    },
+    {
+      label: "Spartan Flow",
+      value: `+${params.spartanUp}  /  -${params.spartanDn}`,
+      color: params.spartanUp > params.spartanDn ? "#22c55e" : params.spartanDn > params.spartanUp ? "#ef4444" : "#e8ecf6",
+    },
+    {
+      label: "PCR",
+      value: params.pcr != null ? params.pcr.toFixed(2) : "–",
+      color: params.pcr != null ? (params.pcr > 1.1 ? "#22c55e" : params.pcr < 0.85 ? "#ef4444" : "#f59e0b") : "#4b5563",
+    },
   ];
 
-  const chipW = (pW - pad * 2 - 14) / 4;
-  const row1Y = pY + 148, row2Y = pY + 218;
+  const chipTotalW = rx - lx;
+  const chipW = (chipTotalW - 12) / 4;
+  const chipY1 = pY + 256;
 
   for (let i = 0; i < chips.length; i++) {
-    const col = i % 4, row = Math.floor(i / 4);
-    const cx2 = tX + col * (chipW + 4);
-    const cy2 = row === 0 ? row1Y : row2Y;
+    const cx4 = lx + i * (chipW + 4);
+    rr(ctx, cx4, chipY1, chipW, 70, 10);
+    ctx.fillStyle = "#0d1117"; ctx.fill();
+    ctx.strokeStyle = "#1f2937"; ctx.lineWidth = 1; ctx.stroke();
 
-    // Chip bg
-    ctx.fillStyle = "#111827";
-    ctx.beginPath(); ctx.roundRect(cx2, cy2, chipW, 58, 8); ctx.fill();
+    // colour left edge on chip
+    ctx.fillStyle = chips[i].color + "33";
+    rr(ctx, cx4, chipY1, chipW, 70, 10); ctx.fill();
+    rr(ctx, cx4, chipY1, 4, 70, 4); ctx.fillStyle = chips[i].color; ctx.fill();
 
-    ctx.fillStyle = "#6b7280"; ctx.font = "500 11px system-ui, Segoe UI, Arial";
-    ctx.fillText(chips[i].label, cx2 + 10, cy2 + 18);
-    ctx.fillStyle = chips[i].color ?? "#e8ecf6"; ctx.font = `700 22px system-ui, Segoe UI, Arial`;
-    ctx.fillText(chips[i].value, cx2 + 10, cy2 + 46);
+    ctx.fillStyle = "#6b7280"; ctx.font = `500 11px "${font}"`;
+    ctx.fillText(chips[i].label, cx4 + 12, chipY1 + 20);
+    ctx.fillStyle = chips[i].color; ctx.font = `700 22px "${font}"`;
+    ctx.fillText(chips[i].value, cx4 + 12, chipY1 + 52);
+  }
+
+  // ── Adv/Dec proportion bar ───────────────────────────────────────────────
+  const total = params.advancers + params.decliners;
+  if (total > 0) {
+    const barStartX = lx, barEndX = rx, propY = pY + 340;
+    const advPct = params.advancers / total;
+    ctx.fillStyle = "#1f2937";
+    rr(ctx, barStartX, propY, barEndX - barStartX, 8, 4); ctx.fill();
+    ctx.fillStyle = "#22c55e";
+    rr(ctx, barStartX, propY, (barEndX - barStartX) * advPct, 8, 4); ctx.fill();
+    ctx.fillStyle = "#4b5563"; ctx.font = `500 10px "${font}"`;
+    ctx.fillText(`Adv ${Math.round(advPct * 100)}%  ·  Dec ${Math.round((1 - advPct) * 100)}%`, barStartX, propY + 22);
   }
 
   return canvas.toBuffer("image/png");
@@ -355,102 +424,181 @@ async function renderPredictionCardPng(params: {
   asof: string;
 }): Promise<Uint8Array> {
   const { createCanvas } = await import("@napi-rs/canvas");
+  const font = await ensureFonts();
   const isLong = params.direction === "LONG";
   const accent = isLong ? "#22c55e" : "#ef4444";
-  const panelBg = isLong ? "#08130a" : "#150808";
-  const W = 820, H = 300, pad = 24;
+  const panelBg = isLong ? "#060e07" : "#0e0606";
 
+  const W = 820, H = 440;
   const canvas = createCanvas(W, H);
   const ctx = canvas.getContext("2d");
 
-  ctx.fillStyle = "#05060a"; ctx.fillRect(0, 0, W, H);
-
-  // Panel
-  const pX = 14, pY = 10, pW = W - 28, pH = H - 20, r = 16;
-  ctx.beginPath();
-  ctx.moveTo(pX + r, pY); ctx.lineTo(pX + pW - r, pY);
-  ctx.quadraticCurveTo(pX + pW, pY, pX + pW, pY + r);
-  ctx.lineTo(pX + pW, pY + pH - r); ctx.quadraticCurveTo(pX + pW, pY + pH, pX + pW - r, pY + pH);
-  ctx.lineTo(pX + r, pY + pH); ctx.quadraticCurveTo(pX, pY + pH, pX, pY + pH - r);
-  ctx.lineTo(pX, pY + r); ctx.quadraticCurveTo(pX, pY, pX + r, pY);
-  ctx.closePath();
+  // Bg + panel
+  ctx.fillStyle = "#050810"; ctx.fillRect(0, 0, W, H);
+  const pX = 12, pY = 10, pW = W - 24, pH = H - 20;
+  rr(ctx, pX, pY, pW, pH, 18);
   ctx.fillStyle = panelBg; ctx.fill();
-  ctx.lineWidth = 2; ctx.strokeStyle = accent; ctx.stroke();
+  ctx.lineWidth = 1.5; ctx.strokeStyle = accent + "99"; ctx.stroke();
 
-  // Accent top strip
-  ctx.save();
-  ctx.beginPath();
-  ctx.moveTo(pX + r, pY); ctx.lineTo(pX + pW - r, pY);
-  ctx.quadraticCurveTo(pX + pW, pY, pX + pW, pY + r);
-  ctx.lineTo(pX + pW, pY + 8); ctx.lineTo(pX, pY + 8);
-  ctx.lineTo(pX, pY + r); ctx.quadraticCurveTo(pX, pY, pX + r, pY);
-  ctx.closePath();
-  ctx.fillStyle = accent; ctx.fill();
-  ctx.restore();
+  // Left bar
+  rr(ctx, pX, pY, 6, pH, 10); ctx.fillStyle = accent; ctx.fill();
 
-  const tX = pX + pad;
+  const lx = pX + 26, rx = pX + pW - 22;
 
-  // Header: direction + TF + TF count
-  ctx.fillStyle = "#9ca3af"; ctx.font = "600 13px system-ui, Segoe UI, Arial";
-  ctx.fillText("PREDICTION ENGINE  ·  NIFTY 50", tX, pY + 40);
+  // ── Header ───────────────────────────────────────────────────────────────
+  ctx.fillStyle = "#4b5563"; ctx.font = `600 12px "${font}"`;
+  ctx.fillText("PREDICTION ENGINE  ·  NIFTY 50 OPTIONS", lx, pY + 36);
+  ctx.fillStyle = "#374151"; ctx.font = `500 12px "${font}"`;
+  ctx.textAlign = "right"; ctx.fillText(toIst(params.asof), rx, pY + 36); ctx.textAlign = "left";
 
-  const d = new Date(params.asof);
-  const ist = new Date(d.getTime() + 5.5 * 3600_000);
-  const timeStr = String(ist.getUTCHours()).padStart(2, "0") + ":" + String(ist.getUTCMinutes()).padStart(2, "0") + " IST";
-  ctx.fillStyle = "#6b7280"; ctx.font = "500 12px system-ui, Segoe UI, Arial";
-  ctx.textAlign = "right"; ctx.fillText(timeStr, pX + pW - pad, pY + 40); ctx.textAlign = "left";
+  // ── Direction badge ───────────────────────────────────────────────────────
+  const dirLabel = isLong ? "LONG" : "SHORT";
+  const dirArrow = isLong ? "▲" : "▼";
 
-  // Big direction text
-  ctx.fillStyle = accent; ctx.font = `900 46px system-ui, Segoe UI, Arial`;
-  ctx.fillText((isLong ? "▲  LONG" : "▼  SHORT") + `  ·  ${params.timeframe}  ·  ${params.tfAgree}/3 TFs`, tX, pY + 92);
+  // Badge background
+  const badgeW = 180, badgeH = 52;
+  rr(ctx, lx, pY + 50, badgeW, badgeH, 12);
+  ctx.fillStyle = accent + "22"; ctx.fill();
+  ctx.strokeStyle = accent + "88"; ctx.lineWidth = 1.5; ctx.stroke();
+  ctx.fillStyle = accent; ctx.font = `800 32px "${font}"`;
+  ctx.fillText(`${dirArrow}  ${dirLabel}`, lx + 14, pY + 88);
 
-  // Session + lifecycle
-  ctx.fillStyle = "#9ca3af"; ctx.font = "500 13px system-ui, Segoe UI, Arial";
-  ctx.fillText(params.session.replace(/_/g, " ") + "  ·  " + params.lifecycle.replace(/_/g, " "), tX, pY + 116);
+  // Timeframe + TF agreement (right of badge)
+  ctx.fillStyle = "#e8ecf6"; ctx.font = `700 28px "${font}"`;
+  ctx.fillText(`${params.timeframe}`, lx + badgeW + 20, pY + 84);
+  ctx.fillStyle = "#6b7280"; ctx.font = `500 13px "${font}"`;
+  ctx.fillText(`${params.tfAgree}/3 timeframes agree`, lx + badgeW + 20, pY + 104);
 
-  // Separator
-  ctx.strokeStyle = "#1f2937"; ctx.lineWidth = 1;
-  ctx.beginPath(); ctx.moveTo(tX, pY + 130); ctx.lineTo(pX + pW - pad, pY + 130); ctx.stroke();
-
-  // Three big price boxes: ENTRY | TARGET | STOP
-  const boxW = (pW - pad * 2 - 16) / 3;
-  const boxes = [
-    { label: "ENTRY",  value: params.entryPrice.toFixed(2),  color: "#e8ecf6",    bg: "#111827" },
-    { label: "TARGET", value: params.targetPrice.toFixed(2), color: "#22c55e",    bg: "#0a1a0e" },
-    { label: "STOP",   value: params.stopPrice.toFixed(2),   color: "#ef4444",    bg: "#1a0a0a" },
-  ];
-
-  const boxY = pY + 142;
-  for (let i = 0; i < 3; i++) {
-    const bx = tX + i * (boxW + 8);
-    ctx.fillStyle = boxes[i].bg;
-    ctx.beginPath(); ctx.roundRect(bx, boxY, boxW, 68, 8); ctx.fill();
-    ctx.fillStyle = "#6b7280"; ctx.font = "700 11px system-ui, Segoe UI, Arial";
-    ctx.fillText(boxes[i].label, bx + 12, boxY + 18);
-    ctx.fillStyle = boxes[i].color; ctx.font = `700 28px system-ui, Segoe UI, Arial`;
-    ctx.fillText(boxes[i].value, bx + 12, boxY + 52);
-  }
-
-  // Bottom row of indicator chips
+  // Confidence arc (far right)
   const conf = Math.round(params.confidence * 100);
-  const chips2 = [
-    { label: "Confidence", value: conf + "%", color: conf >= 70 ? "#22c55e" : conf >= 50 ? "#f59e0b" : "#9ca3af" },
-    { label: "RSI 5m",  value: params.rsi5m  != null ? params.rsi5m.toFixed(0)           : "–", color: params.rsi5m  != null ? (params.rsi5m  > 55 ? "#22c55e" : params.rsi5m  < 45 ? "#ef4444" : "#e8ecf6") : "#6b7280" },
-    { label: "RSI 15m", value: params.rsi15m != null ? params.rsi15m.toFixed(0)           : "–", color: params.rsi15m != null ? (params.rsi15m > 55 ? "#22c55e" : params.rsi15m < 45 ? "#ef4444" : "#e8ecf6") : "#6b7280" },
-    { label: "BB %B 5m", value: params.bbPctB5m != null ? Math.round(params.bbPctB5m * 100) + "%" : "–", color: "#e8ecf6" },
+  const confCol = conf >= 70 ? "#22c55e" : conf >= 50 ? "#f59e0b" : "#9ca3af";
+  const arcX = rx - 44, arcY = pY + 84, arcR = 36;
+  ctx.strokeStyle = "#1f2937"; ctx.lineWidth = 7; ctx.lineCap = "round";
+  ctx.beginPath(); ctx.arc(arcX, arcY, arcR, Math.PI * 0.75, Math.PI * 2.25); ctx.stroke();
+  const confSweep = (conf / 100) * Math.PI * 1.5;
+  ctx.strokeStyle = confCol; ctx.lineWidth = 7;
+  ctx.beginPath(); ctx.arc(arcX, arcY, arcR, Math.PI * 0.75, Math.PI * 0.75 + confSweep); ctx.stroke();
+  ctx.fillStyle = confCol; ctx.font = `700 16px "${font}"`;
+  ctx.textAlign = "center"; ctx.fillText(conf + "%", arcX, arcY + 6); ctx.textAlign = "left";
+  ctx.fillStyle = "#4b5563"; ctx.font = `500 10px "${font}"`;
+  ctx.textAlign = "center"; ctx.fillText("CONF", arcX, arcY + 20); ctx.textAlign = "left";
+
+  // Session + lifecycle line
+  ctx.fillStyle = "#6b7280"; ctx.font = `500 13px "${font}"`;
+  ctx.fillText(
+    params.session.replace(/_/g, " ") + "   ·   " + params.lifecycle.replace(/_/g, " "),
+    lx, pY + 124,
+  );
+
+  // ── Divider ───────────────────────────────────────────────────────────────
+  ctx.strokeStyle = "#1f2937"; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(lx, pY + 140); ctx.lineTo(rx, pY + 140); ctx.stroke();
+
+  // ── Three price boxes ─────────────────────────────────────────────────────
+  const ptsDiff = (v: number) => {
+    const d = v - params.entryPrice;
+    return (d >= 0 ? "+" : "") + d.toFixed(0) + " pts";
+  };
+  const boxTotalW = rx - lx;
+  const boxW = (boxTotalW - 16) / 3;
+  const boxY = pY + 154;
+  const boxH = 88;
+  const boxDefs = [
+    { label: "ENTRY PRICE",  value: params.entryPrice.toFixed(2),  sub: "",               valCol: "#e8ecf6",  bg: "#0d1117",  edge: "#1f2937" },
+    { label: "TARGET",       value: params.targetPrice.toFixed(2), sub: ptsDiff(params.targetPrice), valCol: "#22c55e", bg: "#071009",  edge: "#166534" },
+    { label: "STOP LOSS",    value: params.stopPrice.toFixed(2),   sub: ptsDiff(params.stopPrice),   valCol: "#ef4444", bg: "#100707",  edge: "#7f1d1d" },
+  ];
+  for (let i = 0; i < 3; i++) {
+    const bx = lx + i * (boxW + 8);
+    rr(ctx, bx, boxY, boxW, boxH, 12);
+    ctx.fillStyle = boxDefs[i].bg; ctx.fill();
+    ctx.strokeStyle = boxDefs[i].edge; ctx.lineWidth = 1.5; ctx.stroke();
+    ctx.fillStyle = "#4b5563"; ctx.font = `600 11px "${font}"`;
+    ctx.fillText(boxDefs[i].label, bx + 14, boxY + 22);
+    ctx.fillStyle = boxDefs[i].valCol; ctx.font = `700 30px "${font}"`;
+    ctx.fillText(boxDefs[i].value, bx + 14, boxY + 60);
+    if (boxDefs[i].sub) {
+      ctx.fillStyle = boxDefs[i].valCol + "aa"; ctx.font = `500 13px "${font}"`;
+      ctx.fillText(boxDefs[i].sub, bx + 14, boxY + 78);
+    }
+  }
+
+  // ── R:R visual bar ────────────────────────────────────────────────────────
+  const rrBarY = pY + 256;
+  const reward = Math.abs(params.targetPrice - params.entryPrice);
+  const risk   = Math.abs(params.stopPrice   - params.entryPrice);
+  const rrRatio = risk > 0 ? reward / risk : 0;
+  const barTotalW = rx - lx;
+  const riskFrac  = Math.min(1, risk   / (risk + reward + 0.0001));
+  const rewardFrac = Math.min(1, reward / (risk + reward + 0.0001));
+
+  // track bg
+  ctx.fillStyle = "#1f2937"; rr(ctx, lx, rrBarY, barTotalW, 10, 5); ctx.fill();
+  // risk (left, red)
+  ctx.fillStyle = "#ef4444"; rr(ctx, lx, rrBarY, barTotalW * riskFrac, 10, 5); ctx.fill();
+  // reward (right, green) — drawn right-aligned
+  ctx.fillStyle = "#22c55e";
+  const rwX = lx + barTotalW - barTotalW * rewardFrac;
+  rr(ctx, rwX, rrBarY, barTotalW * rewardFrac, 10, 5); ctx.fill();
+
+  ctx.fillStyle = "#6b7280"; ctx.font = `500 11px "${font}"`;
+  ctx.fillText(`Risk  ${risk.toFixed(0)} pts`, lx, rrBarY + 24);
+  ctx.fillStyle = "#9ca3af"; ctx.font = `700 11px "${font}"`;
+  ctx.textAlign = "center"; ctx.fillText(`R:R  ${rrRatio.toFixed(1)}`, lx + barTotalW / 2, rrBarY + 24); ctx.textAlign = "left";
+  ctx.fillStyle = "#6b7280"; ctx.font = `500 11px "${font}"`;
+  ctx.textAlign = "right"; ctx.fillText(`Reward  ${reward.toFixed(0)} pts`, rx, rrBarY + 24); ctx.textAlign = "left";
+
+  // ── Divider ───────────────────────────────────────────────────────────────
+  ctx.strokeStyle = "#1f2937"; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(lx, pY + 298); ctx.lineTo(rx, pY + 298); ctx.stroke();
+
+  // ── Indicator chips row ───────────────────────────────────────────────────
+  const indChips = [
+    {
+      label: "RSI 5m",
+      value: params.rsi5m != null ? params.rsi5m.toFixed(1) : "–",
+      color: params.rsi5m != null ? (params.rsi5m > 60 ? "#22c55e" : params.rsi5m < 40 ? "#ef4444" : "#f59e0b") : "#4b5563",
+    },
+    {
+      label: "RSI 15m",
+      value: params.rsi15m != null ? params.rsi15m.toFixed(1) : "–",
+      color: params.rsi15m != null ? (params.rsi15m > 60 ? "#22c55e" : params.rsi15m < 40 ? "#ef4444" : "#f59e0b") : "#4b5563",
+    },
+    {
+      label: "BB %B 5m",
+      value: params.bbPctB5m != null ? Math.round(params.bbPctB5m * 100) + "%" : "–",
+      color: params.bbPctB5m != null
+        ? (params.bbPctB5m > 0.8 ? "#ef4444" : params.bbPctB5m < 0.2 ? "#22c55e" : "#f59e0b")
+        : "#4b5563",
+    },
+    {
+      label: "TF Agreement",
+      value: `${params.tfAgree} / 3`,
+      color: params.tfAgree >= 3 ? "#22c55e" : params.tfAgree === 2 ? "#f59e0b" : "#ef4444",
+    },
   ];
 
-  const chipW2 = (pW - pad * 2 - 12) / 4;
-  const chipY = pY + 222;
-  for (let i = 0; i < chips2.length; i++) {
-    const cx2 = tX + i * (chipW2 + 4);
-    ctx.fillStyle = "#111827";
-    ctx.beginPath(); ctx.roundRect(cx2, chipY, chipW2, 48, 8); ctx.fill();
-    ctx.fillStyle = "#6b7280"; ctx.font = "500 11px system-ui, Segoe UI, Arial";
-    ctx.fillText(chips2[i].label, cx2 + 10, chipY + 16);
-    ctx.fillStyle = chips2[i].color; ctx.font = `700 19px system-ui, Segoe UI, Arial`;
-    ctx.fillText(chips2[i].value, cx2 + 10, chipY + 38);
+  const ichipW = (barTotalW - 12) / 4;
+  const ichipY = pY + 312;
+  for (let i = 0; i < indChips.length; i++) {
+    const cx5 = lx + i * (ichipW + 4);
+    rr(ctx, cx5, ichipY, ichipW, 62, 10);
+    ctx.fillStyle = "#0d1117"; ctx.fill();
+    ctx.strokeStyle = indChips[i].color + "44"; ctx.lineWidth = 1; ctx.stroke();
+    rr(ctx, cx5, ichipY, 4, 62, 4); ctx.fillStyle = indChips[i].color; ctx.fill();
+    ctx.fillStyle = "#6b7280"; ctx.font = `500 11px "${font}"`;
+    ctx.fillText(indChips[i].label, cx5 + 12, ichipY + 20);
+    ctx.fillStyle = indChips[i].color; ctx.font = `700 24px "${font}"`;
+    ctx.fillText(indChips[i].value, cx5 + 12, ichipY + 50);
   }
+
+  // ── Direction glow stripe at bottom ──────────────────────────────────────
+  const grad = ctx.createLinearGradient(lx, 0, rx, 0);
+  grad.addColorStop(0, accent + "33");
+  grad.addColorStop(0.5, accent + "11");
+  grad.addColorStop(1, accent + "00");
+  ctx.fillStyle = grad;
+  ctx.fillRect(pX + 6, pY + pH - 10, pW - 12, 8);
 
   return canvas.toBuffer("image/png");
 }
