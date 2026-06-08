@@ -2018,12 +2018,14 @@ async function main() {
     // eslint-disable-next-line no-console
     console.log(JSON.stringify(snap));
     if (telegram) {
-      telegram.maybeSendSignal(snap).catch(() => {
-        // ignore
-      });
-      telegram.maybeSendStockFlow(snap).catch(() => {
-        // ignore
-      });
+      telegram.maybeSendSignal(snap).catch(() => {});
+      telegram.maybeSendStockFlow(snap).catch(() => {});
+      telegram.sendMarketCondition(snap).catch(() => {});
+      for (const pred of snap.predictionLog ?? []) {
+        if (pred.outcome === "PENDING") {
+          telegram.sendPrediction(pred).catch(() => {});
+        }
+      }
     }
 
     try {
@@ -2127,12 +2129,14 @@ async function main() {
     // eslint-disable-next-line no-console
     console.log(JSON.stringify(snap));
     if (telegram) {
-      telegram.maybeSendSignal(snap).catch(() => {
-        // ignore
-      });
-      telegram.maybeSendStockFlow(snap).catch(() => {
-        // ignore
-      });
+      telegram.maybeSendSignal(snap).catch(() => {});
+      telegram.maybeSendStockFlow(snap).catch(() => {});
+      telegram.sendMarketCondition(snap).catch(() => {});
+      for (const pred of snap.predictionLog ?? []) {
+        if (pred.outcome === "PENDING") {
+          telegram.sendPrediction(pred).catch(() => {});
+        }
+      }
     }
   }, intervalMs);
 
