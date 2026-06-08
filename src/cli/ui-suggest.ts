@@ -73,9 +73,10 @@ body{margin:0;font-family:system-ui,-apple-system,'Segoe UI',Roboto,Arial,sans-s
 .g2{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px}
 @media(max-width:960px){.g2{grid-template-columns:1fr}}
 
-/* QUICK STATS — 4 cols only (VIX + straddle removed, both in context card) */
-.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px}
-@media(max-width:800px){.stats{grid-template-columns:repeat(2,1fr)}}
+/* QUICK STATS — 6 cols */
+.stats{display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin-bottom:12px}
+@media(max-width:900px){.stats{grid-template-columns:repeat(3,1fr)}}
+@media(max-width:600px){.stats{grid-template-columns:repeat(2,1fr)}}
 .sc{background:var(--s2);border:1px solid var(--b1);border-radius:12px;padding:10px 14px}
 .sl{font-size:10px;color:var(--m);text-transform:uppercase;letter-spacing:.5px;margin-bottom:2px}
 .sv{font-size:22px;font-weight:800;font-family:var(--mono);line-height:1}
@@ -227,8 +228,10 @@ tr:hover td{background:rgba(232,236,246,.025)}
 
 <div class="wrap">
 
-<!-- QUICK STATS (4 cols — VIX & straddle are in Context card below) -->
+<!-- QUICK STATS (6 cols) -->
 <div class="stats">
+  <div class="sc" style="border-color:rgba(34,197,94,.25)"><div class="sl" style="color:var(--g)">ATM CE LTP</div><div class="sv mono up" id="stCE">–</div><div class="ss" id="stCEsub">call premium</div></div>
+  <div class="sc" style="border-color:rgba(239,68,68,.25)"><div class="sl" style="color:var(--r)">ATM PE LTP</div><div class="sv mono dn" id="stPE">–</div><div class="ss" id="stPEsub">put premium</div></div>
   <div class="sc"><div class="sl">Futures LTP</div><div class="sv mono" id="stF">–</div><div class="ss" id="stFc">–</div></div>
   <div class="sc"><div class="sl">Breadth Move</div><div class="sv mono" id="stB">–</div><div class="ss" id="stAD">–</div></div>
   <div class="sc"><div class="sl">Buy/Sell Imb</div><div class="sv mono" id="stI">–</div><div class="ss">depth imbalance</div></div>
@@ -428,7 +431,7 @@ tr:hover td{background:rgba(232,236,246,.025)}
   <div class="ct">Timeframes <span class="hint">1m · 5m · 15m — PnC = probability × confidence × confluence</span></div>
   <div style="overflow:auto">
     <table class="mono tfTable">
-      <thead><tr><th>TF</th><th>Fut</th><th>Rec</th><th>Conf</th><th>Prob</th><th>PnC</th><th>Align</th><th>RSI</th><th>BB %B</th></tr></thead>
+      <thead><tr><th>TF</th><th style="color:var(--g2)">CE LTP</th><th style="color:var(--r2)">PE LTP</th><th>Rec</th><th>Conf</th><th>Prob</th><th>PnC</th><th>Align</th><th>RSI</th><th>BB %B</th></tr></thead>
       <tbody id="tfBody"></tbody>
     </table>
   </div>
@@ -931,7 +934,12 @@ function applyUpdate(obj){
         var sig=rv.signals||{},rsiVal=sig.rsi14!=null?Number(sig.rsi14):null,bbVal=sig.bb!=null?Number(sig.bb.pctB):null;
         var rsiCls=rsiVal!=null?(rsiVal>=60?'up':rsiVal<=40?'dn':''):'';
         var bbCls=bbVal!=null?(bbVal>0.8?'dn':bbVal<0.2?'up':''):'';
-        tr.innerHTML='<td class="mono">'+rows[i].k+'</td><td class="mono">'+(obj.futureLtp!=null?fmt(obj.futureLtp,2):'–')+'</td>'+
+        var _tOa=obj.options&&obj.options.atm?obj.options.atm:{};
+        var _tCeLtp=_tOa.ce&&_tOa.ce.premium!=null?Number(_tOa.ce.premium):null;
+        var _tPeLtp=_tOa.pe&&_tOa.pe.premium!=null?Number(_tOa.pe.premium):null;
+        tr.innerHTML='<td class="mono">'+rows[i].k+'</td>'+
+          '<td class="mono up">'+(_tCeLtp!=null?fmt(_tCeLtp,2):'–')+'</td>'+
+          '<td class="mono dn">'+(_tPeLtp!=null?fmt(_tPeLtp,2):'–')+'</td>'+
           '<td><span class="pill '+pillCls(rv.recommendation)+'">'+String(rv.recommendation||'–')+'</span></td>'+
           '<td class="mono">'+(rv.confidence!=null?(rv.confidence*100).toFixed(1)+'%':'–')+'</td>'+
           '<td class="mono">'+(rv.probability!=null?(rv.probability*100).toFixed(1)+'%':'–')+'</td>'+
@@ -949,7 +957,15 @@ function applyUpdate(obj){
   if(e('ad'))e('ad').innerHTML='<span style="color:var(--g2);font-weight:700">▲ '+String(b.advancers||'–')+'</span>&nbsp;<span style="color:var(--r2);font-weight:700">▼ '+String(b.decliners||'–')+'</span>';
   if(e('imb')){e('imb').textContent=imbv==null?'–':fmt(imbv,3);e('imb').className='mono '+(imbv>0.05?'up':imbv<-0.05?'dn':'');}
 
-  // Quick stats (4 cols)
+  // Quick stats (6 cols) — CE/PE options LTP first, then futures
+  var _oa=obj.options&&obj.options.atm?obj.options.atm:{};
+  var _ce=_oa.ce||{},_pe=_oa.pe||{};
+  var ceLtp=_ce.premium!=null?Number(_ce.premium):null;
+  var peLtp=_pe.premium!=null?Number(_pe.premium):null;
+  if(e('stCE'))e('stCE').textContent=ceLtp!=null?fmt(ceLtp,2):'–';
+  if(e('stCEsub'))e('stCEsub').textContent=_ce.instrument?String(_ce.instrument).split(':').pop()||'call premium':'call premium';
+  if(e('stPE'))e('stPE').textContent=peLtp!=null?fmt(peLtp,2):'–';
+  if(e('stPEsub'))e('stPEsub').textContent=_pe.instrument?String(_pe.instrument).split(':').pop()||'put premium':'put premium';
   if(e('stF'))e('stF').textContent=obj.futureLtp!=null?fmt(obj.futureLtp,0):'–';
   if(e('stFc'))e('stFc').textContent=obj.futureLtp!=null?'ltp':'–';
   if(e('stB')){e('stB').textContent=bmv!=null?(bmv>=0?'+':'')+fmt(bmv,2)+'%':'–';e('stB').className='sv mono '+(bmv>0?'up':bmv<0?'dn':'neu');}
