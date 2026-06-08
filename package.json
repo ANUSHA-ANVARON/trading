@@ -27,7 +27,7 @@
     "defaults:nifty": "tsx src/cli/pick-nifty-defaults.ts",
     "paper:options:today": "tsx src/cli/paper-options-today.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "start": "tsx src/cli/ui-suggest.ts"
+    "start": "tsx src/cli/ui-suggest.ts --telegram"
   },
   "dependencies": {
     "@napi-rs/canvas": "^0.1.80",
