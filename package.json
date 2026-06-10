@@ -30,6 +30,7 @@
     "start": "tsx src/cli/ui-suggest.ts --telegram"
   },
   "dependencies": {
+    "@fontsource/dejavu-sans": "^5.2.5",
     "@napi-rs/canvas": "^0.1.80",
     "dotenv": "^16.4.5",
     "fast-xml-parser": "^4.5.5",

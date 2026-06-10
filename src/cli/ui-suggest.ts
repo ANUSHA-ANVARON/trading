@@ -458,7 +458,10 @@ tr:hover td{background:rgba(232,236,246,.025)}
   </div>
   <div class="cbody" id="predBody">
     <!-- Summary stats bar -->
-    <div id="predStats" style="display:flex;gap:12px;flex-wrap:wrap;margin:8px 0 12px;align-items:center"></div>
+    <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin:8px 0 12px">
+      <div id="predStats" style="display:flex;gap:12px;flex-wrap:wrap;align-items:center"></div>
+      <button class="btn btn-g" id="btnExportPred" style="margin-left:auto">⬇ Export CSV</button>
+    </div>
     <!-- Table -->
     <div style="overflow:auto;max-height:400px">
       <table class="mono" style="width:100%;border-collapse:collapse;font-size:12px" id="predTable">
@@ -528,7 +531,7 @@ tr:hover td{background:rgba(232,236,246,.025)}
 </div><!-- /wrap -->
 
 <script>
-var paused=false, lastSH=[], sigFilt='';
+var paused=false, lastSH=[], sigFilt='', lastPredLog=[];
 
 // ── Collapsible ────────────────────────────────────────────────────
 function coll(tId,bId){
@@ -712,6 +715,7 @@ function renderPredLog(arr){
   var tbody=e('predBody2'),note=e('predNote'),stats=e('predStats');
   if(!tbody)return;
   arr=arr||[];
+  lastPredLog=arr;
 
   // Stats bar
   if(stats){
@@ -901,6 +905,26 @@ e('btnExport')&&e('btnExport').addEventListener('click',function(){
   var blob=new Blob([lines.join('\\n')],{type:'text/csv'});
   var url=URL.createObjectURL(blob);
   var a=document.createElement('a');a.href=url;a.download='signal_history_'+new Date().toISOString().slice(0,10)+'.csv';a.click();URL.revokeObjectURL(url);
+});
+
+e('btnExportPred')&&e('btnExportPred').addEventListener('click',function(){
+  if(!lastPredLog.length){alert('No predictions logged yet.');return;}
+  var h=['Time (IST)','Timeframe','Direction','Entry','Target','Stop','Confidence %','RSI 5m','RSI 15m','BB %B 5m','TF Agreement','Lifecycle','Session','Status','Outcome Price','P&L pts'];
+  var lines=[h.join(',')];
+  for(var i=0;i<lastPredLog.length;i++){
+    var r=lastPredLog[i],sg=r.signals||{};
+    lines.push([
+      toIST(r.asof), r.timeframe, r.direction, r.entryPrice, r.targetPrice, r.stopPrice,
+      r.confidence!=null?Math.round(r.confidence*100):'',
+      sg.rsi5m!=null?sg.rsi5m.toFixed(1):'', sg.rsi15m!=null?sg.rsi15m.toFixed(1):'',
+      sg.bbPctB5m!=null?Math.round(sg.bbPctB5m*100):'', sg.tfAgree!=null?sg.tfAgree:'',
+      String(r.lifecycle||'').replace(/,/g,' '), String(r.session||'').replace(/,/g,' '),
+      r.outcome||'PENDING', r.outcomePrice!=null?r.outcomePrice:'', r.pnlPoints!=null?r.pnlPoints:''
+    ].join(','));
+  }
+  var blob=new Blob([lines.join('\\n')],{type:'text/csv'});
+  var url=URL.createObjectURL(blob);
+  var a=document.createElement('a');a.href=url;a.download='prediction_log_'+new Date().toISOString().slice(0,10)+'.csv';a.click();URL.revokeObjectURL(url);
 });
 
 // ── Reasoning ─────────────────────────────────────────────────────

@@ -111,30 +111,22 @@ async function sendTelegramPhoto(params: {
   }
 }
 
-// Load fonts from common system paths (Railway/Ubuntu ships DejaVu/Liberation by default)
+// Register a bundled font (works regardless of OS/container — no reliance on
+// system fonts being present on Railway). Cached after first call.
+let fontFamily: string | null = null;
 async function ensureFonts(): Promise<string> {
+  if (fontFamily) return fontFamily;
   const { GlobalFonts } = await import("@napi-rs/canvas");
-  const dirs = [
-    "/usr/share/fonts/truetype/dejavu",
-    "/usr/share/fonts/truetype/liberation",
-    "/usr/share/fonts/truetype/ubuntu",
-    "/usr/share/fonts/truetype/freefont",
-    "/usr/share/fonts/truetype",
-    "/usr/share/fonts",
-    "/usr/local/share/fonts",
-  ];
-  for (const d of dirs) {
-    try { GlobalFonts.loadFontsFromDir(d); } catch {}
+  try {
+    const path = await import("path");
+    const base = path.join(process.cwd(), "node_modules", "@fontsource", "dejavu-sans", "files");
+    GlobalFonts.registerFromPath(path.join(base, "dejavu-sans-latin-400-normal.woff2"), "DejaVu Sans");
+    GlobalFonts.registerFromPath(path.join(base, "dejavu-sans-latin-700-normal.woff2"), "DejaVu Sans");
+    fontFamily = "DejaVu Sans";
+  } catch {
+    fontFamily = "sans-serif";
   }
-  // Try to detect what's registered; prefer modern → classic fallbacks
-  const families = ["Ubuntu", "Liberation Sans", "DejaVu Sans", "FreeSans", "sans-serif"];
-  const list: string[] = (GlobalFonts as any).families ?? [];
-  for (const fam of families) {
-    if (list.length === 0 || list.some((f: string) => f.toLowerCase().includes(fam.toLowerCase().split(" ")[0]))) {
-      return fam;
-    }
-  }
-  return "sans-serif";
+  return fontFamily;
 }
 
 function rr(ctx: any, x: number, y: number, w: number, h: number, rad: number) {
@@ -957,6 +949,7 @@ export class TelegramNotifier {
     if (!this.isConfigured()) return;
     const lc = snapshot.lifecycle;
     if (!lc) return;
+    if (lc.session === "CLOSED") return;
 
     const condition = lifecycleToCondition(String(lc.state ?? ""));
     const now = Date.now();

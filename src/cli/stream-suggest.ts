@@ -1807,6 +1807,9 @@ async function main() {
       const bb15 = s15.signals?.bb ?? null;
 
       for (const dir of ["LONG", "SHORT"] as const) {
+        // Gate 0: market must be open — never fire predictions outside trading hours
+        if (lifecycle.session === "CLOSED") continue;
+
         const lastFired = dir === "LONG" ? lastPredLong : lastPredShort;
         if (nowMs - lastFired < PRED_DEBOUNCE_MS) continue;
 
