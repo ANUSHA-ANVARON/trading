@@ -31,6 +31,7 @@ type Tick = {
   sell_quantity?: number;
   oi?: number;
   volume?: number;
+  volume_traded?: number;
   depth?: { buy?: Array<{ quantity?: number; price?: number }>; sell?: Array<{ quantity?: number; price?: number }> };
   exchange_timestamp?: Date;
   timestamp?: Date;
@@ -871,7 +872,8 @@ async function main() {
       // Stock volume/turnover tracking for NSE universe.
       if (tokenToKey.has(token)) {
         const px = Number(t.last_price);
-        const vol = typeof t.volume === "number" && Number.isFinite(t.volume) ? Number(t.volume) : null;
+        const volRaw = t.volume_traded ?? t.volume;
+        const vol = typeof volRaw === "number" && Number.isFinite(volRaw) ? Number(volRaw) : null;
         const ts = t.exchange_timestamp ?? t.timestamp ?? new Date();
 
         if (Number.isFinite(px) && vol !== null) {
