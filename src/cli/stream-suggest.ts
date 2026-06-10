@@ -706,13 +706,17 @@ async function main() {
 
   type StockFlowState = {
     bucketStartMs: number | null;
+    bucketStartPrice: number | null;
     lastVolume: number | null;
+    lastPrice: number | null;
     currentTurnoverInr: number;
-    lastClosedTurnoverInr: number;
+    closedTurnoverInr: number;
+    closedDir: "UP" | "DOWN" | "FLAT" | null;
+    closedBucketMs: number | null;
+    processedBucketMs: number | null;
   };
 
   const stockFlow = new Map<number, StockFlowState>();
-  const lastStockState = new Map<number, string>();
   const stockLogs: StockLogRow[] = [];
   const MAX_STOCK_LOGS = 500;
 
@@ -880,15 +884,32 @@ async function main() {
           const tsMs = ts.getTime();
           const bucketStartMs = Math.floor(tsMs / 60_000) * 60_000;
 
-          const prev = stockFlow.get(token) ?? { bucketStartMs: null, lastVolume: null, currentTurnoverInr: 0, lastClosedTurnoverInr: 0 };
+          const prev = stockFlow.get(token) ?? {
+            bucketStartMs: null, bucketStartPrice: null, lastVolume: null, lastPrice: null,
+            currentTurnoverInr: 0, closedTurnoverInr: 0, closedDir: null,
+            closedBucketMs: null, processedBucketMs: null,
+          };
 
           if (prev.bucketStartMs === null) {
             prev.bucketStartMs = bucketStartMs;
+            prev.bucketStartPrice = px;
           } else if (bucketStartMs !== prev.bucketStartMs) {
-            // finalize previous minute bucket
-            prev.lastClosedTurnoverInr = prev.currentTurnoverInr;
+            // finalize previous minute bucket — record its turnover and direction
+            // so a fresh round of buying/selling can re-trigger signals every minute.
+            prev.closedTurnoverInr = prev.currentTurnoverInr;
+            prev.closedBucketMs = prev.bucketStartMs;
+            const startPx = prev.bucketStartPrice;
+            const endPx = prev.lastPrice;
+            prev.closedDir =
+              startPx !== null && endPx !== null && startPx > 0
+                ? (() => {
+                    const chg = (endPx - startPx) / startPx;
+                    return chg > 0.0005 ? "UP" : chg < -0.0005 ? "DOWN" : "FLAT";
+                  })()
+                : null;
             prev.currentTurnoverInr = 0;
             prev.bucketStartMs = bucketStartMs;
+            prev.bucketStartPrice = px;
           }
 
           if (prev.lastVolume !== null && vol >= prev.lastVolume) {
@@ -898,6 +919,7 @@ async function main() {
           }
 
           prev.lastVolume = vol;
+          prev.lastPrice = px;
           stockFlow.set(token, prev);
         }
       }
@@ -1096,7 +1118,7 @@ async function main() {
         const action: StockSignal["action"] = dir === "UP" ? "BUY" : dir === "DOWN" ? "SELL" : "HOLD";
 
         const st = stockFlow.get(w.token) ?? null;
-        const turnoverInr = st ? (st.lastClosedTurnoverInr > 0 ? st.lastClosedTurnoverInr : st.currentTurnoverInr) : 0;
+        const turnoverInr = st ? (st.closedTurnoverInr > 0 ? st.closedTurnoverInr : st.currentTurnoverInr) : 0;
         const turnoverCr = Number.isFinite(turnoverInr) && turnoverInr > 0 ? turnoverInr / CRORE_INR : null;
         const mode: StockSignal["mode"] = turnoverInr >= SPARTAN_THRESHOLD_INR ? "SPARTAN" : "SURF";
 
@@ -1126,44 +1148,29 @@ async function main() {
       })
       .filter((r) => r && r.symbol);
 
-    // Append to stock logs only on meaningful state changes.
+    // Stock signal triggers: driven by each just-closed 1-minute turnover bucket,
+    // so a fresh burst of buying/selling re-fires every minute it stays significant
+    // (not just on a one-time flip from the prior day-relative direction).
     for (const r of stockSignals) {
       const token = nseUniverse.find((w) => w.key === r.key)?.token;
       if (!token) continue;
-      const state = `${r.mode}|${r.dir}|${r.action}`;
-      const prev = lastStockState.get(token);
-      if (prev === state) continue;
+      const st = stockFlow.get(token);
+      if (!st || st.closedBucketMs === null) continue;
+      if (st.processedBucketMs === st.closedBucketMs) continue; // already handled this bucket
+      st.processedBucketMs = st.closedBucketMs;
 
-      // Log when mode changes, or when direction changes while in SPARTAN.
-      const prevMode = prev ? prev.split("|")[0] : null;
-      const modeChanged = prevMode !== null && prevMode !== r.mode;
-      const isSpartanNow = r.mode === "SPARTAN";
-      const wasSpartan = prevMode === "SPARTAN";
+      const closedDir = st.closedDir;
+      const closedTurnoverCr = st.closedTurnoverInr / CRORE_INR;
+      if (!closedDir || closedDir === "FLAT" || closedTurnoverCr < BUY_SELL_TRIGGER_CR) continue;
 
-      // Stock event log: only record SPARTAN transitions (keeps the log clean).
-      if (modeChanged || isSpartanNow || wasSpartan) {
-        stockLogs.push({
-          asof: new Date().toISOString(),
-          key: r.key,
-          symbol: r.symbol,
-          label: r.label,
-          action: r.action,
-          pctChange: r.pctChange,
-          turnoverCr_1m: r.turnoverCr_1m,
-        });
-        if (stockLogs.length > MAX_STOCK_LOGS) stockLogs.splice(0, stockLogs.length - MAX_STOCK_LOGS);
+      const tsNow = new Date(st.closedBucketMs + 60_000).toISOString();
+
+      let label: StockSignal["label"] | null = null;
+      if (st.closedTurnoverInr >= SPARTAN_THRESHOLD_INR) {
+        label = closedDir === "UP" ? "SPARTAN_UP" : "SPARTAN_DN";
+      } else if (closedTurnoverCr >= SURF_TRIGGER_CR) {
+        label = closedDir === "UP" ? "SURFINGUP" : "SURFINGDN";
       }
-
-      // Signal history: direction-flip based so SURFINGUP→SPARTAN_UP doesn't re-stamp lastBuy.
-      // Derive previous direction and label from the saved state string.
-      const prevDir = prev ? (prev.split("|")[1] as "UP" | "DOWN" | "FLAT") : null;
-      const prevLabel = prev
-        ? (() => {
-            const [m, d] = prev.split("|");
-            if (m === "SPARTAN") return d === "UP" ? "SPARTAN_UP" : d === "DOWN" ? "SPARTAN_DN" : "SPARTAN_FLAT";
-            return d === "UP" ? "SURFINGUP" : d === "DOWN" ? "SURFINGDN" : "SURFINGFLAT";
-          })()
-        : null;
 
       const hist = stockSignalHistory.get(r.key) ?? {
         lastBuy: null,
@@ -1173,21 +1180,28 @@ async function main() {
         lastSurfingUp: null,
         lastSurfingDn: null,
       };
-      const tsNow = new Date().toISOString();
-      const turnoverCrNow = r.turnoverCr_1m ?? 0;
 
-      // lastBuy / lastSell: genuine direction flip AND turnover >= 5cr
-      if (prevDir !== "UP" && r.dir === "UP" && turnoverCrNow >= BUY_SELL_TRIGGER_CR) hist.lastBuy = tsNow;
-      if (prevDir !== "DOWN" && r.dir === "DOWN" && turnoverCrNow >= BUY_SELL_TRIGGER_CR) hist.lastSell = tsNow;
-      // SPARTAN stamps: label newly entered (SPARTAN already implies >= 50cr threshold)
-      if (prevLabel !== "SPARTAN_UP" && r.label === "SPARTAN_UP") hist.lastSpartanUp = tsNow;
-      if (prevLabel !== "SPARTAN_DN" && r.label === "SPARTAN_DN") hist.lastSpartanDn = tsNow;
-      // SURFING stamps: label newly entered AND turnover >= 10cr
-      if (prevLabel !== "SURFINGUP" && r.label === "SURFINGUP" && turnoverCrNow >= SURF_TRIGGER_CR) hist.lastSurfingUp = tsNow;
-      if (prevLabel !== "SURFINGDN" && r.label === "SURFINGDN" && turnoverCrNow >= SURF_TRIGGER_CR) hist.lastSurfingDn = tsNow;
+      if (closedDir === "UP") hist.lastBuy = tsNow;
+      if (closedDir === "DOWN") hist.lastSell = tsNow;
+      if (label === "SPARTAN_UP") hist.lastSpartanUp = tsNow;
+      if (label === "SPARTAN_DN") hist.lastSpartanDn = tsNow;
+      if (label === "SURFINGUP") hist.lastSurfingUp = tsNow;
+      if (label === "SURFINGDN") hist.lastSurfingDn = tsNow;
       stockSignalHistory.set(r.key, hist);
 
-      lastStockState.set(token, state);
+      // Stock event log: only record notable (SURF/SPARTAN-grade) bursts.
+      if (label) {
+        stockLogs.push({
+          asof: tsNow,
+          key: r.key,
+          symbol: r.symbol,
+          label,
+          action: closedDir === "UP" ? "BUY" : "SELL",
+          pctChange: r.pctChange,
+          turnoverCr_1m: Number(closedTurnoverCr.toFixed(1)),
+        });
+        if (stockLogs.length > MAX_STOCK_LOGS) stockLogs.splice(0, stockLogs.length - MAX_STOCK_LOGS);
+      }
     }
 
     function expiryTYears(expiry: string): number {
