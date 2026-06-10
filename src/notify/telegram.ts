@@ -144,6 +144,45 @@ function rr(ctx: any, x: number, y: number, w: number, h: number, rad: number) {
   ctx.closePath();
 }
 
+// Draws a large, low-opacity directional watermark (arrow / diamond) used to
+// give alert cards a branded "template" look without external image assets.
+function drawWatermarkIcon(ctx: any, cx: number, cy: number, size: number, kind: "up" | "down" | "neutral", color: string, alpha: number) {
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.fillStyle = color;
+  if (kind === "neutral") {
+    ctx.beginPath();
+    ctx.moveTo(cx, cy - size / 2);
+    ctx.lineTo(cx + size / 2, cy);
+    ctx.lineTo(cx, cy + size / 2);
+    ctx.lineTo(cx - size / 2, cy);
+    ctx.closePath();
+    ctx.fill();
+  } else {
+    const up = kind === "up";
+    const headH = size * 0.55;
+    const stemW = size * 0.32;
+    const stemH = size * 0.45;
+    ctx.beginPath();
+    if (up) {
+      ctx.moveTo(cx, cy - size / 2);
+      ctx.lineTo(cx + size / 2, cy - size / 2 + headH);
+      ctx.lineTo(cx - size / 2, cy - size / 2 + headH);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillRect(cx - stemW / 2, cy - size / 2 + headH, stemW, stemH);
+    } else {
+      ctx.moveTo(cx, cy + size / 2);
+      ctx.lineTo(cx + size / 2, cy + size / 2 - headH);
+      ctx.lineTo(cx - size / 2, cy + size / 2 - headH);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillRect(cx - stemW / 2, cy + size / 2 - headH - stemH, stemW, stemH);
+    }
+  }
+  ctx.restore();
+}
+
 function toIst(iso: string): string {
   const d = new Date(iso);
   const ist = new Date(d.getTime() + 5.5 * 3600_000);
@@ -229,6 +268,13 @@ const CONDITION_META: Record<MarketCondition, { label: string; icon: string; acc
   NEUTRAL:        { label: "NEUTRAL",          icon: "◆",  accent: "#f59e0b", panelBg: "#141009" },
 };
 
+const CONDITION_ICON_KIND: Record<MarketCondition, "up" | "down" | "neutral"> = {
+  STRONG_BULLISH: "up",
+  MILDLY_BULLISH: "up",
+  BEARISH: "down",
+  NEUTRAL: "neutral",
+};
+
 async function renderMarketConditionCardPng(params: {
   condition: MarketCondition;
   session: string;
@@ -256,6 +302,19 @@ async function renderMarketConditionCardPng(params: {
   const pX = 12, pY = 10, pW = W - 24, pH = H - 20;
   rr(ctx, pX, pY, pW, pH, 18);
   ctx.fillStyle = meta.panelBg; ctx.fill();
+
+  // ── Branded header band (gradient wash + watermark icon) ─────────────────
+  ctx.save();
+  rr(ctx, pX, pY, pW, pH, 18); ctx.clip();
+  const hdrGrad = ctx.createLinearGradient(pX, pY, pX + pW, pY + 150);
+  hdrGrad.addColorStop(0, meta.accent + "30");
+  hdrGrad.addColorStop(0.6, meta.accent + "0c");
+  hdrGrad.addColorStop(1, meta.accent + "00");
+  ctx.fillStyle = hdrGrad;
+  ctx.fillRect(pX, pY, pW, 150);
+  drawWatermarkIcon(ctx, pX + pW - 90, pY + 70, 190, CONDITION_ICON_KIND[params.condition], meta.accent, 0.07);
+  ctx.restore();
+
   ctx.lineWidth = 1.5; ctx.strokeStyle = meta.accent + "99"; ctx.stroke();
 
   // ── Left accent bar ──────────────────────────────────────────────────────
@@ -430,6 +489,19 @@ async function renderPredictionCardPng(params: {
   const pX = 12, pY = 10, pW = W - 24, pH = H - 20;
   rr(ctx, pX, pY, pW, pH, 18);
   ctx.fillStyle = panelBg; ctx.fill();
+
+  // ── Branded header band (gradient wash + watermark icon) ─────────────────
+  ctx.save();
+  rr(ctx, pX, pY, pW, pH, 18); ctx.clip();
+  const hdrGrad = ctx.createLinearGradient(pX, pY, pX + pW, pY + 150);
+  hdrGrad.addColorStop(0, accent + "30");
+  hdrGrad.addColorStop(0.6, accent + "0c");
+  hdrGrad.addColorStop(1, accent + "00");
+  ctx.fillStyle = hdrGrad;
+  ctx.fillRect(pX, pY, pW, 150);
+  drawWatermarkIcon(ctx, pX + pW - 90, pY + 70, 190, isLong ? "up" : "down", accent, 0.07);
+  ctx.restore();
+
   ctx.lineWidth = 1.5; ctx.strokeStyle = accent + "99"; ctx.stroke();
 
   // Left bar
