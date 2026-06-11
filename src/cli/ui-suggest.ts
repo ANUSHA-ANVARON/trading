@@ -431,7 +431,7 @@ tr:hover td{background:rgba(232,236,246,.025)}
   <div class="ct">Timeframes <span class="hint">1m · 5m · 15m — PnC = probability × confidence × confluence</span></div>
   <div style="overflow:auto">
     <table class="mono tfTable">
-      <thead><tr><th>TF</th><th style="color:var(--g2)">CE LTP</th><th style="color:var(--r2)">PE LTP</th><th>Rec</th><th>Conf</th><th>Prob</th><th>PnC</th><th>Align</th><th>RSI</th><th>BB %B</th></tr></thead>
+      <thead><tr><th>TF</th><th>Strike</th><th>Rec</th><th>Conf</th><th>Prob</th><th>PnC</th><th>Align</th><th>RSI</th><th>BB %B</th></tr></thead>
       <tbody id="tfBody"></tbody>
     </table>
   </div>
@@ -958,12 +958,9 @@ function applyUpdate(obj){
         var sig=rv.signals||{},rsiVal=sig.rsi14!=null?Number(sig.rsi14):null,bbVal=sig.bb!=null?Number(sig.bb.pctB):null;
         var rsiCls=rsiVal!=null?(rsiVal>=60?'up':rsiVal<=40?'dn':''):'';
         var bbCls=bbVal!=null?(bbVal>0.8?'dn':bbVal<0.2?'up':''):'';
-        var _tOa=obj.options&&obj.options.atm?obj.options.atm:{};
-        var _tCeLtp=_tOa.ce&&_tOa.ce.premium!=null?Number(_tOa.ce.premium):null;
-        var _tPeLtp=_tOa.pe&&_tOa.pe.premium!=null?Number(_tOa.pe.premium):null;
+        var _tStrike=obj.options&&obj.options.atmStrike!=null?Number(obj.options.atmStrike):null;
         tr.innerHTML='<td class="mono">'+rows[i].k+'</td>'+
-          '<td class="mono up">'+(_tCeLtp!=null?fmt(_tCeLtp,2):'–')+'</td>'+
-          '<td class="mono dn">'+(_tPeLtp!=null?fmt(_tPeLtp,2):'–')+'</td>'+
+          '<td class="mono">'+(_tStrike!=null?fmt(_tStrike,0):'–')+'</td>'+
           '<td><span class="pill '+pillCls(rv.recommendation)+'">'+String(rv.recommendation||'–')+'</span></td>'+
           '<td class="mono">'+(rv.confidence!=null?(rv.confidence*100).toFixed(1)+'%':'–')+'</td>'+
           '<td class="mono">'+(rv.probability!=null?(rv.probability*100).toFixed(1)+'%':'–')+'</td>'+
