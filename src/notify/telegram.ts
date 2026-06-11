@@ -195,6 +195,65 @@ const CONDITION_GRADIENT: Record<MarketCondition, { from: string; to: string }> 
   NEUTRAL:        { from: "#302510", to: "#140d04" },
 };
 
+const ALGOBOT_GOLD = "#d4a574";
+
+// Draws the shared AlgoBot card chrome (matches algobot_telegram_alert_template.svg):
+// dark red/black gradient, top accent bar, bot icon, "ALGOBOT" title, a dynamic
+// subtitle line, a divider, and the footer wordmark. Caller must wrap in
+// ctx.save()/ctx.restore() (this clips to the card's rounded-rect bounds).
+// Returns the content-area bounds below the divider for card-specific info.
+function drawAlgobotTemplate(ctx: any, font: string, W: number, H: number, subtitle: string): { lx: number; rx: number; top: number; bottom: number } {
+  rr(ctx, 0, 0, W, H, 18);
+  ctx.clip();
+
+  const bg = ctx.createLinearGradient(0, 0, W, H);
+  bg.addColorStop(0, "#3d1a1a");
+  bg.addColorStop(1, "#1a0a0a");
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, W, H);
+
+  // Top accent bar
+  ctx.globalAlpha = 0.6;
+  ctx.fillStyle = ALGOBOT_GOLD;
+  ctx.fillRect(0, 0, W, 4);
+  ctx.globalAlpha = 1;
+
+  // Bot icon
+  drawAlgobotIcon(ctx, W / 2, 18, 120, ALGOBOT_GOLD, 1);
+
+  // Title
+  ctx.fillStyle = ALGOBOT_GOLD;
+  ctx.font = `800 52px "${font}"`;
+  ctx.letterSpacing = "2px";
+  ctx.textAlign = "center";
+  ctx.fillText("ALGOBOT", W / 2, 185);
+  ctx.letterSpacing = "0px";
+
+  // Subtitle
+  ctx.fillStyle = "#e8d4b8";
+  ctx.font = `400 16px "${font}"`;
+  ctx.fillText(subtitle, W / 2, 222);
+  ctx.textAlign = "left";
+
+  // Divider
+  ctx.globalAlpha = 0.5;
+  ctx.strokeStyle = ALGOBOT_GOLD;
+  ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(60, 245); ctx.lineTo(W - 60, 245); ctx.stroke();
+  ctx.globalAlpha = 1;
+
+  // Footer
+  ctx.globalAlpha = 0.8;
+  ctx.fillStyle = "#8b6f47";
+  ctx.font = `400 12px "${font}"`;
+  ctx.textAlign = "center";
+  ctx.fillText("ALGOBOT TRADING INTELLIGENCE", W / 2, H - 28);
+  ctx.globalAlpha = 1;
+  ctx.textAlign = "left";
+
+  return { lx: 60, rx: W - 60, top: 270, bottom: H - 70 };
+}
+
 function toIst(iso: string): string {
   const d = new Date(iso);
   const ist = new Date(d.getTime() + 5.5 * 3600_000);
@@ -283,192 +342,90 @@ const CONDITION_META: Record<MarketCondition, { label: string; icon: string; acc
 async function renderMarketConditionCardPng(params: {
   condition: MarketCondition;
   session: string;
-  rsi1m: number | null; rsi5m: number | null; rsi15m: number | null;
-  breadthMove: number | null;
-  advancers: number; decliners: number;
-  spartanUp: number; spartanDn: number;
-  scse: number | null;
-  pcr: number | null;
   asof: string;
 }): Promise<Uint8Array> {
   const { createCanvas } = await import("@napi-rs/canvas");
   const font = await ensureFonts();
   const meta = CONDITION_META[params.condition];
 
-  // ── Canvas setup ────────────────────────────────────────────────────────
-  const W = 820, H = 430;
+  const W = 690, H = 510;
   const canvas = createCanvas(W, H);
   const ctx = canvas.getContext("2d");
 
-  // Outer bg
-  ctx.fillStyle = "#050810"; ctx.fillRect(0, 0, W, H);
-
-  // Card panel
-  const pX = 12, pY = 10, pW = W - 24, pH = H - 20;
-  const grad = CONDITION_GRADIENT[params.condition];
-
-  // ── Branded panel: diagonal colour-graded background + AlgoBot icon ──────
   ctx.save();
-  rr(ctx, pX, pY, pW, pH, 18); ctx.clip();
-  const bgGrad = ctx.createLinearGradient(pX, pY, pX + pW, pY + pH);
-  bgGrad.addColorStop(0, grad.from);
-  bgGrad.addColorStop(1, grad.to);
-  ctx.fillStyle = bgGrad;
-  ctx.fillRect(pX, pY, pW, pH);
-  const hdrGrad = ctx.createLinearGradient(pX, pY, pX + pW, pY + 150);
-  hdrGrad.addColorStop(0, meta.accent + "30");
-  hdrGrad.addColorStop(0.6, meta.accent + "0c");
-  hdrGrad.addColorStop(1, meta.accent + "00");
-  ctx.fillStyle = hdrGrad;
-  ctx.fillRect(pX, pY, pW, 150);
-  drawAlgobotIcon(ctx, pX + pW - 50, pY + 58, 92, meta.accent, 0.18);
-  ctx.restore();
+  const sess = params.session.replace(/_/g, " ");
+  const { lx, rx, top, bottom } = drawAlgobotTemplate(ctx, font, W, H, `NIFTY 50  ·  ${sess}  ·  ${toIst(params.asof)}`);
 
-  ctx.lineWidth = 1.5; ctx.strokeStyle = meta.accent + "99"; ctx.stroke();
+  // ── Market condition box — only the headline state, colour-graded ────────
+  const boxH = bottom - top;
+  rr(ctx, lx, top, rx - lx, boxH, 10);
+  ctx.fillStyle = "#2a1515"; ctx.fill();
+  ctx.globalAlpha = 0.4; ctx.strokeStyle = ALGOBOT_GOLD; ctx.lineWidth = 1; ctx.stroke();
+  ctx.globalAlpha = 1;
 
-  // ── Left accent bar ──────────────────────────────────────────────────────
-  const barW = 6;
-  rr(ctx, pX, pY, barW, pH, 10);
-  ctx.fillStyle = meta.accent; ctx.fill();
+  ctx.fillStyle = ALGOBOT_GOLD; ctx.font = `600 14px "${font}"`;
+  ctx.fillText("MARKET CONDITION", lx + 20, top + 30);
 
-  const lx = pX + barW + 20; // left content x
-  const rx = pX + pW - 22;   // right content x
-
-  // ── Header row ──────────────────────────────────────────────────────────
-  ctx.fillStyle = "#4b5563"; ctx.font = `600 12px "${font}"`;
-  ctx.fillText("NIFTY 50  ·  MARKET CONDITION", lx, pY + 36);
-
-  ctx.fillStyle = "#374151"; ctx.font = `500 12px "${font}"`;
-  ctx.textAlign = "right";
-  ctx.fillText(toIst(params.asof), rx, pY + 36);
+  ctx.fillStyle = meta.accent; ctx.font = `800 56px "${font}"`;
+  ctx.textAlign = "center";
+  ctx.fillText(meta.label, W / 2, top + boxH / 2 + 18);
   ctx.textAlign = "left";
 
-  // ── Big condition label ──────────────────────────────────────────────────
-  ctx.fillStyle = meta.accent; ctx.font = `800 48px "${font}"`;
-  ctx.fillText(meta.label, lx, pY + 98);
+  ctx.restore();
+  return canvas.toBuffer("image/png");
+}
 
-  // session pill
-  const sess = params.session.replace(/_/g, " ");
-  ctx.fillStyle = "#111827";
-  rr(ctx, lx, pY + 110, ctx.measureText(sess).width + 24, 26, 13);
-  ctx.fill();
-  ctx.fillStyle = "#9ca3af"; ctx.font = `500 13px "${font}"`;
-  ctx.fillText(sess, lx + 12, pY + 128);
+// Renders a SPARTAN stock-flow alert using the shared AlgoBot template, with
+// each stock's direction/action coloured (green = bullish, red = bearish).
+async function renderSpartanCardPng(stocks: Array<{ symbol: string; dir: string; action: string; label: string }>): Promise<Uint8Array> {
+  const { createCanvas } = await import("@napi-rs/canvas");
+  const font = await ensureFonts();
 
-  // ── Divider ──────────────────────────────────────────────────────────────
-  ctx.strokeStyle = "#1f2937"; ctx.lineWidth = 1;
-  ctx.beginPath(); ctx.moveTo(lx, pY + 150); ctx.lineTo(rx, pY + 150); ctx.stroke();
+  const W = 690;
+  const rowH = 56;
+  const top = 270;
+  const boxH = Math.max(1, stocks.length) * rowH + 24;
+  const H = top + boxH + 90;
 
-  // ── RSI bars row ─────────────────────────────────────────────────────────
-  const rsiItems = [
-    { label: "RSI  1m", val: params.rsi1m },
-    { label: "RSI  5m", val: params.rsi5m },
-    { label: "RSI 15m", val: params.rsi15m },
-  ];
-  const barRowY = pY + 162;
-  const barTotalW = rx - lx;
-  const barSlotW = barTotalW / 3;
-  const barTrackW = barSlotW - 24;
-  const barH = 8;
+  const canvas = createCanvas(W, H);
+  const ctx = canvas.getContext("2d");
 
-  for (let i = 0; i < rsiItems.length; i++) {
-    const bx = lx + i * barSlotW;
-    const val = rsiItems[i].val;
-    const pct = val != null ? Math.min(1, Math.max(0, val / 100)) : 0;
-    const col = val != null ? (val > 60 ? "#22c55e" : val < 40 ? "#ef4444" : "#f59e0b") : "#374151";
+  ctx.save();
+  const { lx, rx } = drawAlgobotTemplate(ctx, font, W, H, "SPARTAN Stock Alert");
 
-    ctx.fillStyle = "#9ca3af"; ctx.font = `500 11px "${font}"`;
-    ctx.fillText(rsiItems[i].label, bx, barRowY + 12);
+  rr(ctx, lx, top, rx - lx, boxH, 10);
+  ctx.fillStyle = "#2a1515"; ctx.fill();
+  ctx.globalAlpha = 0.4; ctx.strokeStyle = ALGOBOT_GOLD; ctx.lineWidth = 1; ctx.stroke();
+  ctx.globalAlpha = 1;
 
-    ctx.fillStyle = "#1f2937";
-    rr(ctx, bx, barRowY + 18, barTrackW, barH, 4); ctx.fill();
-    if (val != null) {
-      ctx.fillStyle = col;
-      rr(ctx, bx, barRowY + 18, barTrackW * pct, barH, 4); ctx.fill();
+  for (let i = 0; i < stocks.length; i++) {
+    const st = stocks[i];
+    const isUp = st.dir === "LONG" || st.action === "BUY";
+    const isDown = st.dir === "SHORT" || st.action === "SELL";
+    const color = isUp ? "#22c55e" : isDown ? "#ef4444" : "#e8d4b8";
+    const y = top + 12 + i * rowH;
+
+    ctx.fillStyle = "#e8d4b8"; ctx.font = `700 22px "${font}"`;
+    ctx.fillText(st.symbol, lx + 20, y + 26);
+
+    ctx.fillStyle = color; ctx.font = `700 20px "${font}"`;
+    ctx.textAlign = "right";
+    ctx.fillText(`${st.dir}  ${st.action}`, rx - 20, y + 26);
+    ctx.textAlign = "left";
+
+    if (st.label) {
+      ctx.fillStyle = "#b8a080"; ctx.font = `400 13px "${font}"`;
+      ctx.fillText(st.label, lx + 20, y + 46);
     }
 
-    ctx.fillStyle = col; ctx.font = `700 22px "${font}"`;
-    ctx.fillText(val != null ? val.toFixed(1) : "–", bx, barRowY + 58);
+    if (i < stocks.length - 1) {
+      ctx.globalAlpha = 0.15; ctx.strokeStyle = ALGOBOT_GOLD; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(lx + 12, y + rowH - 6); ctx.lineTo(rx - 12, y + rowH - 6); ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
   }
 
-  // ── SCSE score (right side of RSI row) ───────────────────────────────────
-  const scseVal = params.scse ?? 0;
-  const scseCol = scseVal >= 65 ? "#22c55e" : scseVal <= 35 ? "#ef4444" : "#f59e0b";
-  const scseX = lx + 3 * barSlotW - 90;
-  ctx.fillStyle = "#9ca3af"; ctx.font = `500 11px "${font}"`;
-  ctx.fillText("SCSE", scseX, barRowY + 12);
-  // arc gauge
-  const cx3 = scseX + 34, cy3 = barRowY + 48, rad = 30;
-  ctx.strokeStyle = "#1f2937"; ctx.lineWidth = 6; ctx.lineCap = "round";
-  ctx.beginPath(); ctx.arc(cx3, cy3, rad, Math.PI * 0.75, Math.PI * 2.25); ctx.stroke();
-  const sweep = (scseVal / 100) * Math.PI * 1.5;
-  ctx.strokeStyle = scseCol; ctx.lineWidth = 6;
-  ctx.beginPath(); ctx.arc(cx3, cy3, rad, Math.PI * 0.75, Math.PI * 0.75 + sweep); ctx.stroke();
-  ctx.fillStyle = scseCol; ctx.font = `700 18px "${font}"`;
-  ctx.textAlign = "center"; ctx.fillText(String(scseVal), cx3, cy3 + 7); ctx.textAlign = "left";
-
-  // ── Divider ──────────────────────────────────────────────────────────────
-  ctx.strokeStyle = "#1f2937"; ctx.lineWidth = 1;
-  ctx.beginPath(); ctx.moveTo(lx, pY + 242); ctx.lineTo(rx, pY + 242); ctx.stroke();
-
-  // ── Bottom metric chips (2 rows × 4) ─────────────────────────────────────
-  const chips: Array<{ label: string; value: string; color: string }> = [
-    {
-      label: "Breadth",
-      value: params.breadthMove != null ? (params.breadthMove >= 0 ? "+" : "") + params.breadthMove.toFixed(2) + "%" : "–",
-      color: params.breadthMove != null ? (params.breadthMove > 0.1 ? "#22c55e" : params.breadthMove < -0.1 ? "#ef4444" : "#f59e0b") : "#4b5563",
-    },
-    {
-      label: "Adv / Dec",
-      value: `${params.advancers}  /  ${params.decliners}`,
-      color: params.advancers > params.decliners ? "#22c55e" : params.decliners > params.advancers ? "#ef4444" : "#e8ecf6",
-    },
-    {
-      label: "Spartan Flow",
-      value: `+${params.spartanUp}  /  -${params.spartanDn}`,
-      color: params.spartanUp > params.spartanDn ? "#22c55e" : params.spartanDn > params.spartanUp ? "#ef4444" : "#e8ecf6",
-    },
-    {
-      label: "PCR",
-      value: params.pcr != null ? params.pcr.toFixed(2) : "–",
-      color: params.pcr != null ? (params.pcr > 1.1 ? "#22c55e" : params.pcr < 0.85 ? "#ef4444" : "#f59e0b") : "#4b5563",
-    },
-  ];
-
-  const chipTotalW = rx - lx;
-  const chipW = (chipTotalW - 12) / 4;
-  const chipY1 = pY + 256;
-
-  for (let i = 0; i < chips.length; i++) {
-    const cx4 = lx + i * (chipW + 4);
-    rr(ctx, cx4, chipY1, chipW, 70, 10);
-    ctx.fillStyle = "#0d1117"; ctx.fill();
-    ctx.strokeStyle = "#1f2937"; ctx.lineWidth = 1; ctx.stroke();
-
-    // colour left edge on chip
-    ctx.fillStyle = chips[i].color + "33";
-    rr(ctx, cx4, chipY1, chipW, 70, 10); ctx.fill();
-    rr(ctx, cx4, chipY1, 4, 70, 4); ctx.fillStyle = chips[i].color; ctx.fill();
-
-    ctx.fillStyle = "#6b7280"; ctx.font = `500 11px "${font}"`;
-    ctx.fillText(chips[i].label, cx4 + 12, chipY1 + 20);
-    ctx.fillStyle = chips[i].color; ctx.font = `700 22px "${font}"`;
-    ctx.fillText(chips[i].value, cx4 + 12, chipY1 + 52);
-  }
-
-  // ── Adv/Dec proportion bar ───────────────────────────────────────────────
-  const total = params.advancers + params.decliners;
-  if (total > 0) {
-    const barStartX = lx, barEndX = rx, propY = pY + 340;
-    const advPct = params.advancers / total;
-    ctx.fillStyle = "#1f2937";
-    rr(ctx, barStartX, propY, barEndX - barStartX, 8, 4); ctx.fill();
-    ctx.fillStyle = "#22c55e";
-    rr(ctx, barStartX, propY, (barEndX - barStartX) * advPct, 8, 4); ctx.fill();
-    ctx.fillStyle = "#4b5563"; ctx.font = `500 10px "${font}"`;
-    ctx.fillText(`Adv ${Math.round(advPct * 100)}%  ·  Dec ${Math.round((1 - advPct) * 100)}%`, barStartX, propY + 22);
-  }
-
+  ctx.restore();
   return canvas.toBuffer("image/png");
 }
 
@@ -817,7 +774,7 @@ export class TelegramNotifier {
       .join("|");
   }
 
-  private stockCardLines(s: TelegramSignalSnapshot): string[] {
+  private stockAlertRows(s: TelegramSignalSnapshot): Array<{ symbol: string; dir: string; action: string; label: string }> {
     const sigs = Array.isArray((s as any).stockSignals) ? ((s as any).stockSignals as any[]) : [];
     const sp = sigs
       .filter((x) => x && String(x.mode ?? "").toUpperCase() === "SPARTAN")
@@ -828,13 +785,12 @@ export class TelegramNotifier {
       })
       .slice(0, 4);
 
-    return sp.map((x) => {
-      const sym = String(x.symbol ?? x.key ?? "-");
-      const dir = String(x.dir ?? "FLAT").toUpperCase();
-      const act = String(x.action ?? "HOLD").toUpperCase();
-      const lbl = String(x.label ?? "");
-      return `${sym}  [${dir}] ${act}  ${lbl}`.trim();
-    });
+    return sp.map((x) => ({
+      symbol: String(x.symbol ?? x.key ?? "-"),
+      dir: String(x.dir ?? "FLAT").toUpperCase(),
+      action: String(x.action ?? "HOLD").toUpperCase(),
+      label: String(x.label ?? ""),
+    }));
   }
 
   async sendText(text: string): Promise<void> {
@@ -996,11 +952,11 @@ export class TelegramNotifier {
     if (this.lastStockKey === key) return;
     if (now - this.lastStockSentAt < this.minIntervalMs) return;
 
-    const lines = this.stockCardLines(snapshot);
-    if (!lines.length) return;
+    const rows = this.stockAlertRows(snapshot);
+    if (!rows.length) return;
 
     try {
-      const png = await renderAlertCardPng({ title: "CAUTION", lines });
+      const png = await renderSpartanCardPng(rows);
       for (const chatId of this.chatIds) {
         const result = await sendTelegramPhoto({
           token: this.token as string,
@@ -1019,7 +975,7 @@ export class TelegramNotifier {
       }
     } catch (e) {
       // Fallback to text-only if rendering fails.
-      const text = `SPARTAN ALERT\n` + lines.join("\n");
+      const text = `SPARTAN ALERT\n` + rows.map((x) => `${x.symbol}  [${x.dir}] ${x.action}  ${x.label}`.trim()).join("\n");
       for (const chatId of this.chatIds) {
         await sendTelegramMessage({ token: this.token as string, chatId, text });
       }
@@ -1041,21 +997,10 @@ export class TelegramNotifier {
     // Only send if condition changed OR >15 min since last alert for same condition
     if (condition === this.lastCondition && now - this.lastConditionAt < this.conditionDebounceMs) return;
 
-    const b = snapshot.breadth ?? {};
     const params = {
       condition,
       session: String(lc.session ?? "–"),
-      rsi1m:  lc.rsi?.m1  ?? null,
-      rsi5m:  lc.rsi?.m5  ?? null,
-      rsi15m: lc.rsi?.m15 ?? null,
-      breadthMove: typeof b.weighted_move_pct === "number" ? b.weighted_move_pct : null,
-      advancers:  Number(b.advancers  ?? 0),
-      decliners:  Number(b.decliners  ?? 0),
-      spartanUp:  Number(lc.spartan?.up ?? 0),
-      spartanDn:  Number(lc.spartan?.dn ?? 0),
-      scse:       lc.scse ?? null,
-      pcr:        snapshot.options?.chain?.totals?.pcr ?? null,
-      asof:       String(snapshot.asof ?? nowIso()),
+      asof: String(snapshot.asof ?? nowIso()),
     };
 
     try {
@@ -1072,7 +1017,7 @@ export class TelegramNotifier {
       }
     } catch {
       const meta = CONDITION_META[condition];
-      const text = `${meta.icon} NIFTY: ${meta.label}\nSession: ${params.session}\nRSI 5m: ${params.rsi5m ?? "–"}  15m: ${params.rsi15m ?? "–"}\nSCSE: ${params.scse ?? "–"}  PCR: ${params.pcr ?? "–"}`;
+      const text = `${meta.icon} NIFTY: ${meta.label}\nSession: ${params.session}`;
       for (const chatId of this.chatIds) {
         await sendTelegramMessage({ token: this.token as string, chatId, text });
       }
