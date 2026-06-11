@@ -1794,21 +1794,26 @@ async function main() {
     }
 
     // ── Prediction engine ─────────────────────────────────────────
+    // Use the spot index price (same basis as the ATM strike) rather than the
+    // futures LTP, which trades at a basis premium and made entry/target/stop
+    // levels look "ahead of" where NIFTY actually was.
+    const predRefPx = spotLtp ?? futLtp;
+
     // Step 1: resolve outcomes for pending predictions
-    if (futLtp !== null && Number.isFinite(futLtp)) {
+    if (predRefPx !== null && Number.isFinite(predRefPx)) {
       for (const p of predictionLog) {
         if (p.outcome !== "PENDING") continue;
         const ageMs = Date.now() - new Date(p.asof).getTime();
         const expiryMs = p.timeframe === "1m" ? 15 * 60_000 : p.timeframe === "5m" ? 45 * 60_000 : 90 * 60_000;
         const nowTs = new Date().toISOString();
         if (p.direction === "LONG") {
-          if (futLtp >= p.targetPrice) { p.outcome = "TARGET_HIT"; p.outcomePrice = futLtp; p.outcomeAt = nowTs; p.pnlPoints = +(futLtp - p.entryPrice).toFixed(2); }
-          else if (futLtp <= p.stopPrice) { p.outcome = "STOP_HIT"; p.outcomePrice = futLtp; p.outcomeAt = nowTs; p.pnlPoints = +(futLtp - p.entryPrice).toFixed(2); }
-          else if (ageMs >= expiryMs) { p.outcome = "EXPIRED"; p.outcomePrice = futLtp; p.outcomeAt = nowTs; p.pnlPoints = +(futLtp - p.entryPrice).toFixed(2); }
+          if (predRefPx >= p.targetPrice) { p.outcome = "TARGET_HIT"; p.outcomePrice = predRefPx; p.outcomeAt = nowTs; p.pnlPoints = +(predRefPx - p.entryPrice).toFixed(2); }
+          else if (predRefPx <= p.stopPrice) { p.outcome = "STOP_HIT"; p.outcomePrice = predRefPx; p.outcomeAt = nowTs; p.pnlPoints = +(predRefPx - p.entryPrice).toFixed(2); }
+          else if (ageMs >= expiryMs) { p.outcome = "EXPIRED"; p.outcomePrice = predRefPx; p.outcomeAt = nowTs; p.pnlPoints = +(predRefPx - p.entryPrice).toFixed(2); }
         } else {
-          if (futLtp <= p.targetPrice) { p.outcome = "TARGET_HIT"; p.outcomePrice = futLtp; p.outcomeAt = nowTs; p.pnlPoints = +(p.entryPrice - futLtp).toFixed(2); }
-          else if (futLtp >= p.stopPrice) { p.outcome = "STOP_HIT"; p.outcomePrice = futLtp; p.outcomeAt = nowTs; p.pnlPoints = +(p.entryPrice - futLtp).toFixed(2); }
-          else if (ageMs >= expiryMs) { p.outcome = "EXPIRED"; p.outcomePrice = futLtp; p.outcomeAt = nowTs; p.pnlPoints = +(p.entryPrice - futLtp).toFixed(2); }
+          if (predRefPx <= p.targetPrice) { p.outcome = "TARGET_HIT"; p.outcomePrice = predRefPx; p.outcomeAt = nowTs; p.pnlPoints = +(p.entryPrice - predRefPx).toFixed(2); }
+          else if (predRefPx >= p.stopPrice) { p.outcome = "STOP_HIT"; p.outcomePrice = predRefPx; p.outcomeAt = nowTs; p.pnlPoints = +(p.entryPrice - predRefPx).toFixed(2); }
+          else if (ageMs >= expiryMs) { p.outcome = "EXPIRED"; p.outcomePrice = predRefPx; p.outcomeAt = nowTs; p.pnlPoints = +(p.entryPrice - predRefPx).toFixed(2); }
         }
       }
     }
@@ -1857,19 +1862,20 @@ async function main() {
         if (!breadthOk) continue;
 
         // All gates passed — fire prediction
+        if (predRefPx === null || !Number.isFinite(predRefPx)) continue;
         const bestTfSrc = [s15, s5, s1].find((s) => s.recommendation === dir);
         const tfLabel = (bestTfSrc?.timeframe ?? "5m") as "1m" | "5m" | "15m";
-        const tpPoints = futLtp * (tpPct / 100);
-        const slPoints = futLtp * (slPct / 100);
+        const tpPoints = predRefPx * (tpPct / 100);
+        const slPoints = predRefPx * (slPct / 100);
 
         const entry: PredictionEntry = {
           id: `${nowMs}-${dir}`,
           asof: new Date().toISOString(),
           timeframe: tfLabel,
           direction: dir,
-          entryPrice: futLtp,
-          targetPrice: +(dir === "LONG" ? futLtp + tpPoints : futLtp - tpPoints).toFixed(2),
-          stopPrice: +(dir === "LONG" ? futLtp - slPoints : futLtp + slPoints).toFixed(2),
+          entryPrice: predRefPx,
+          targetPrice: +(dir === "LONG" ? predRefPx + tpPoints : predRefPx - tpPoints).toFixed(2),
+          stopPrice: +(dir === "LONG" ? predRefPx - slPoints : predRefPx + slPoints).toFixed(2),
           confidence: Math.max(Number(s5.confidence ?? 0), Number(s15.confidence ?? 0)),
           lifecycle: lifecycle.state,
           session: lifecycle.session,
