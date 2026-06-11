@@ -144,44 +144,56 @@ function rr(ctx: any, x: number, y: number, w: number, h: number, rad: number) {
   ctx.closePath();
 }
 
-// Draws a large, low-opacity directional watermark (arrow / diamond) used to
-// give alert cards a branded "template" look without external image assets.
-function drawWatermarkIcon(ctx: any, cx: number, cy: number, size: number, kind: "up" | "down" | "neutral", color: string, alpha: number) {
+// Draws the AlgoBot robot-face icon (head, antennae, eyes, smile) using canvas
+// primitives — mirrors the bundled algobot-icon.svg template, scaled so its
+// 100x112 viewBox fits within `size`.
+function drawAlgobotIcon(ctx: any, cx: number, cy: number, size: number, accent: string, alpha: number): void {
+  const s = size / 112;
+  const X = (x: number) => cx + x * s;
+  const Y = (y: number) => cy + (y + 78) * s; // shift so head is vertically centred
+
   ctx.save();
   ctx.globalAlpha = alpha;
-  ctx.fillStyle = color;
-  if (kind === "neutral") {
-    ctx.beginPath();
-    ctx.moveTo(cx, cy - size / 2);
-    ctx.lineTo(cx + size / 2, cy);
-    ctx.lineTo(cx, cy + size / 2);
-    ctx.lineTo(cx - size / 2, cy);
-    ctx.closePath();
-    ctx.fill();
-  } else {
-    const up = kind === "up";
-    const headH = size * 0.55;
-    const stemW = size * 0.32;
-    const stemH = size * 0.45;
-    ctx.beginPath();
-    if (up) {
-      ctx.moveTo(cx, cy - size / 2);
-      ctx.lineTo(cx + size / 2, cy - size / 2 + headH);
-      ctx.lineTo(cx - size / 2, cy - size / 2 + headH);
-      ctx.closePath();
-      ctx.fill();
-      ctx.fillRect(cx - stemW / 2, cy - size / 2 + headH, stemW, stemH);
-    } else {
-      ctx.moveTo(cx, cy + size / 2);
-      ctx.lineTo(cx + size / 2, cy + size / 2 - headH);
-      ctx.lineTo(cx - size / 2, cy + size / 2 - headH);
-      ctx.closePath();
-      ctx.fill();
-      ctx.fillRect(cx - stemW / 2, cy + size / 2 - headH - stemH, stemW, stemH);
-    }
-  }
+
+  // Head
+  ctx.fillStyle = accent;
+  rr(ctx, X(-35), Y(-40), 70 * s, 60 * s, 10 * s);
+  ctx.fill();
+
+  // Antennae
+  ctx.strokeStyle = accent;
+  ctx.lineWidth = 4 * s;
+  ctx.lineCap = "round";
+  ctx.beginPath(); ctx.moveTo(X(-18), Y(-40)); ctx.lineTo(X(-18), Y(-65)); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(X(18), Y(-40)); ctx.lineTo(X(18), Y(-65)); ctx.stroke();
+  ctx.fillStyle = accent;
+  ctx.beginPath(); ctx.arc(X(-18), Y(-68), 6 * s, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc(X(18), Y(-68), 6 * s, 0, Math.PI * 2); ctx.fill();
+
+  // Eyes
+  ctx.fillStyle = "#04070c";
+  ctx.beginPath(); ctx.arc(X(-13), Y(-15), 6 * s, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc(X(13), Y(-15), 6 * s, 0, Math.PI * 2); ctx.fill();
+
+  // Smile
+  ctx.strokeStyle = "#04070c";
+  ctx.lineWidth = 4 * s;
+  ctx.beginPath();
+  ctx.moveTo(X(-16), Y(5));
+  ctx.quadraticCurveTo(X(0), Y(18), X(16), Y(5));
+  ctx.stroke();
+
   ctx.restore();
 }
+
+// Diagonal background gradients ("colour grading") for each market state,
+// echoing the AlgoBot card template's dark gradient look.
+const CONDITION_GRADIENT: Record<MarketCondition, { from: string; to: string }> = {
+  STRONG_BULLISH: { from: "#123018", to: "#04140a" },
+  MILDLY_BULLISH: { from: "#1a2a1f", to: "#0a140d" },
+  BEARISH:        { from: "#301214", to: "#140404" },
+  NEUTRAL:        { from: "#302510", to: "#140d04" },
+};
 
 function toIst(iso: string): string {
   const d = new Date(iso);
@@ -261,18 +273,11 @@ export function lifecycleToCondition(state: string): MarketCondition {
   return "NEUTRAL";
 }
 
-const CONDITION_META: Record<MarketCondition, { label: string; icon: string; accent: string; panelBg: string }> = {
-  STRONG_BULLISH: { label: "STRONG BULLISH",  icon: "▲▲", accent: "#22c55e", panelBg: "#08130a" },
-  MILDLY_BULLISH: { label: "MILDLY BULLISH",  icon: "▲",  accent: "#86efac", panelBg: "#0a1610" },
-  BEARISH:        { label: "BEARISH",          icon: "▼",  accent: "#ef4444", panelBg: "#150808" },
-  NEUTRAL:        { label: "NEUTRAL",          icon: "◆",  accent: "#f59e0b", panelBg: "#141009" },
-};
-
-const CONDITION_ICON_KIND: Record<MarketCondition, "up" | "down" | "neutral"> = {
-  STRONG_BULLISH: "up",
-  MILDLY_BULLISH: "up",
-  BEARISH: "down",
-  NEUTRAL: "neutral",
+const CONDITION_META: Record<MarketCondition, { label: string; icon: string; accent: string }> = {
+  STRONG_BULLISH: { label: "STRONG BULLISH",  icon: "▲▲", accent: "#22c55e" },
+  MILDLY_BULLISH: { label: "MILDLY BULLISH",  icon: "▲",  accent: "#86efac" },
+  BEARISH:        { label: "BEARISH",          icon: "▼",  accent: "#ef4444" },
+  NEUTRAL:        { label: "NEUTRAL",          icon: "◆",  accent: "#f59e0b" },
 };
 
 async function renderMarketConditionCardPng(params: {
@@ -300,19 +305,23 @@ async function renderMarketConditionCardPng(params: {
 
   // Card panel
   const pX = 12, pY = 10, pW = W - 24, pH = H - 20;
-  rr(ctx, pX, pY, pW, pH, 18);
-  ctx.fillStyle = meta.panelBg; ctx.fill();
+  const grad = CONDITION_GRADIENT[params.condition];
 
-  // ── Branded header band (gradient wash + watermark icon) ─────────────────
+  // ── Branded panel: diagonal colour-graded background + AlgoBot icon ──────
   ctx.save();
   rr(ctx, pX, pY, pW, pH, 18); ctx.clip();
+  const bgGrad = ctx.createLinearGradient(pX, pY, pX + pW, pY + pH);
+  bgGrad.addColorStop(0, grad.from);
+  bgGrad.addColorStop(1, grad.to);
+  ctx.fillStyle = bgGrad;
+  ctx.fillRect(pX, pY, pW, pH);
   const hdrGrad = ctx.createLinearGradient(pX, pY, pX + pW, pY + 150);
   hdrGrad.addColorStop(0, meta.accent + "30");
   hdrGrad.addColorStop(0.6, meta.accent + "0c");
   hdrGrad.addColorStop(1, meta.accent + "00");
   ctx.fillStyle = hdrGrad;
   ctx.fillRect(pX, pY, pW, 150);
-  drawWatermarkIcon(ctx, pX + pW - 90, pY + 70, 190, CONDITION_ICON_KIND[params.condition], meta.accent, 0.07);
+  drawAlgobotIcon(ctx, pX + pW - 50, pY + 58, 92, meta.accent, 0.18);
   ctx.restore();
 
   ctx.lineWidth = 1.5; ctx.strokeStyle = meta.accent + "99"; ctx.stroke();
@@ -478,7 +487,6 @@ async function renderPredictionCardPng(params: {
   const font = await ensureFonts();
   const isLong = params.direction === "LONG";
   const accent = isLong ? "#22c55e" : "#ef4444";
-  const panelBg = isLong ? "#060e07" : "#0e0606";
 
   const W = 820, H = 440;
   const canvas = createCanvas(W, H);
@@ -487,19 +495,23 @@ async function renderPredictionCardPng(params: {
   // Bg + panel
   ctx.fillStyle = "#050810"; ctx.fillRect(0, 0, W, H);
   const pX = 12, pY = 10, pW = W - 24, pH = H - 20;
-  rr(ctx, pX, pY, pW, pH, 18);
-  ctx.fillStyle = panelBg; ctx.fill();
+  const cardGrad = isLong ? CONDITION_GRADIENT.STRONG_BULLISH : CONDITION_GRADIENT.BEARISH;
 
-  // ── Branded header band (gradient wash + watermark icon) ─────────────────
+  // ── Branded panel: diagonal colour-graded background + AlgoBot icon ──────
   ctx.save();
   rr(ctx, pX, pY, pW, pH, 18); ctx.clip();
+  const bgGrad = ctx.createLinearGradient(pX, pY, pX + pW, pY + pH);
+  bgGrad.addColorStop(0, cardGrad.from);
+  bgGrad.addColorStop(1, cardGrad.to);
+  ctx.fillStyle = bgGrad;
+  ctx.fillRect(pX, pY, pW, pH);
   const hdrGrad = ctx.createLinearGradient(pX, pY, pX + pW, pY + 150);
   hdrGrad.addColorStop(0, accent + "30");
   hdrGrad.addColorStop(0.6, accent + "0c");
   hdrGrad.addColorStop(1, accent + "00");
   ctx.fillStyle = hdrGrad;
   ctx.fillRect(pX, pY, pW, 150);
-  drawWatermarkIcon(ctx, pX + pW - 90, pY + 70, 190, isLong ? "up" : "down", accent, 0.07);
+  drawAlgobotIcon(ctx, pX + pW - 44, pY + pH - 38, 80, accent, 0.14);
   ctx.restore();
 
   ctx.lineWidth = 1.5; ctx.strokeStyle = accent + "99"; ctx.stroke();
