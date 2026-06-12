@@ -260,31 +260,74 @@ function toIst(iso: string): string {
   return String(ist.getUTCHours()).padStart(2, "0") + ":" + String(ist.getUTCMinutes()).padStart(2, "0") + " IST";
 }
 
-async function renderAlertCardPng(params: { title: string; lines: string[] }): Promise<Uint8Array> {
+// Renders a trade-signal alert using the shared AlgoBot template, with two
+// info boxes ("Signal Type" and "Confidence") matching the SVG template
+// layout, coloured by direction (green = LONG, red = SHORT).
+async function renderSignalCardPng(params: {
+  asof: string;
+  action: string;
+  direction: "LONG" | "SHORT" | null;
+  timeframe: string | null;
+  detailLines: string[];
+  confidence: number | null;
+  extraLines: string[];
+}): Promise<Uint8Array> {
   const { createCanvas } = await import("@napi-rs/canvas");
   const font = await ensureFonts();
+  const accent = params.direction === "LONG" ? "#22c55e" : params.direction === "SHORT" ? "#ef4444" : ALGOBOT_GOLD;
 
-  const W = 820, pad = 28;
-  const lineH = 32, titleH = 52;
-  const H = pad * 2 + titleH + Math.max(1, params.lines.length) * lineH + 16;
+  const W = 690;
+  const top = 270;
+  const gap = 20;
+  const box1H = 70 + params.detailLines.length * 26;
+  const box2H = 70 + params.extraLines.length * 26;
+  const H = top + box1H + gap + box2H + 90;
+
   const canvas = createCanvas(W, H);
   const ctx = canvas.getContext("2d");
 
-  ctx.fillStyle = "#050810"; ctx.fillRect(0, 0, W, H);
-  rr(ctx, 12, 10, W - 24, H - 20, 16);
-  ctx.fillStyle = "#0d1117"; ctx.fill();
-  ctx.lineWidth = 1.5; ctx.strokeStyle = "#b48a1a"; ctx.stroke();
+  ctx.save();
+  const sub = `Trading Alert  ·  ${params.timeframe ?? "-"}  ·  ${toIst(params.asof)}`;
+  const { lx, rx } = drawAlgobotTemplate(ctx, font, W, H, sub);
 
-  // accent strip
-  rr(ctx, 12, 10, W - 24, 6, 4);
-  ctx.fillStyle = "#b48a1a"; ctx.fill();
+  // Box 1: signal type
+  let y = top;
+  rr(ctx, lx, y, rx - lx, box1H, 10);
+  ctx.fillStyle = "#2a1515"; ctx.fill();
+  ctx.globalAlpha = 0.4; ctx.strokeStyle = ALGOBOT_GOLD; ctx.lineWidth = 1; ctx.stroke();
+  ctx.globalAlpha = 1;
 
-  ctx.fillStyle = "#fbbf24"; ctx.font = `800 26px "${font}"`;
-  ctx.fillText(params.title.toUpperCase(), pad + 12, pad + titleH - 10);
-  ctx.fillStyle = "#d1d5db"; ctx.font = `500 18px "${font}"`;
-  for (let i = 0; i < params.lines.length; i++) {
-    ctx.fillText(params.lines[i], pad + 12, pad + titleH + i * lineH + 20);
+  ctx.fillStyle = ALGOBOT_GOLD; ctx.font = `600 14px "${font}"`;
+  ctx.fillText("SIGNAL TYPE", lx + 20, y + 30);
+
+  ctx.fillStyle = accent; ctx.font = `800 30px "${font}"`;
+  ctx.fillText(params.action.toUpperCase(), lx + 20, y + 64);
+
+  ctx.fillStyle = "#e8d4b8"; ctx.font = `500 15px "${font}"`;
+  for (let i = 0; i < params.detailLines.length; i++) {
+    ctx.fillText(params.detailLines[i], lx + 20, y + 88 + i * 26);
   }
+
+  // Box 2: confidence
+  y = top + box1H + gap;
+  rr(ctx, lx, y, rx - lx, box2H, 10);
+  ctx.fillStyle = "#2a1515"; ctx.fill();
+  ctx.globalAlpha = 0.4; ctx.strokeStyle = ALGOBOT_GOLD; ctx.lineWidth = 1; ctx.stroke();
+  ctx.globalAlpha = 1;
+
+  ctx.fillStyle = ALGOBOT_GOLD; ctx.font = `600 14px "${font}"`;
+  ctx.fillText("CONFIDENCE", lx + 20, y + 30);
+
+  const confStr = params.confidence != null ? `${(params.confidence * 100).toFixed(0)}%` : "–";
+  ctx.fillStyle = "#e8d4b8"; ctx.font = `800 30px "${font}"`;
+  ctx.fillText(confStr, lx + 20, y + 64);
+
+  ctx.fillStyle = "#e8d4b8"; ctx.font = `500 15px "${font}"`;
+  for (let i = 0; i < params.extraLines.length; i++) {
+    ctx.fillText(params.extraLines[i], lx + 20, y + 88 + i * 26);
+  }
+
+  ctx.restore();
   return canvas.toBuffer("image/png");
 }
 
@@ -820,7 +863,15 @@ export class TelegramNotifier {
     }
   }
 
-  private buildSignalCardLines(s: TelegramSignalSnapshot): string[] {
+  private buildSignalCardData(s: TelegramSignalSnapshot): {
+    asof: string;
+    action: string;
+    direction: "LONG" | "SHORT" | null;
+    timeframe: string | null;
+    detailLines: string[];
+    confidence: number | null;
+    extraLines: string[];
+  } {
     const asof = String(s.asof ?? nowIso());
     const opt = s.options ?? null;
     const decision = opt?.decision ?? null;
@@ -830,18 +881,15 @@ export class TelegramNotifier {
     const action = String(decision?.action ?? "WAIT");
     const dir = dirFromAction(action);
 
-    const lines: string[] = [];
-    lines.push(`TRADE SIGNAL  ${asof.slice(11, 19)} IST`);
-    lines.push(`TF: ${tradeTf ?? "-"}  DIR: ${dir ?? "-"}  ACTION: ${action}`);
-
+    const detailLines: string[] = [];
     if (sug?.style === "BUY") {
       const inst = String(sug.instrument ?? "-");
       const entry = plan?.kind === "BUY_PREMIUM" ? plan.entryPremium : typeof sug.premium === "number" ? Number(sug.premium.toFixed(2)) : null;
       const tgt = plan?.kind === "BUY_PREMIUM" ? plan.targetPremium : null;
       const sl = plan?.kind === "BUY_PREMIUM" ? plan.stopPremium : null;
-      lines.push(`BUY: ${inst}`);
-      if (entry !== null) lines.push(`Entry:${entry}  TGT:${tgt ?? "-"}  SL:${sl ?? "-"}`);
-      if (sug.maxLoss != null) lines.push(`Max Loss: ₹${Number(sug.maxLoss).toFixed(0)}`);
+      detailLines.push(inst);
+      if (entry !== null) detailLines.push(`Entry: ${entry}   Target: ${tgt ?? "-"}   Stop: ${sl ?? "-"}`);
+      if (sug.maxLoss != null) detailLines.push(`Max Loss: ₹${Number(sug.maxLoss).toFixed(0)}`);
     } else if (sug?.style === "CREDIT_SPREAD") {
       const sp = sug.spread;
       const sell = sp?.legs?.sell;
@@ -850,29 +898,38 @@ export class TelegramNotifier {
       const tBuyback = plan?.kind === "CREDIT_SPREAD" ? plan.targetBuyback : null;
       const slBuyback = plan?.kind === "CREDIT_SPREAD" ? plan.stopBuyback : null;
       if (sell && buy) {
-        lines.push(`SELL: ${sell.instrument} @${sell.premium ?? "-"}`);
-        lines.push(`BUY:  ${buy.instrument} @${buy.premium ?? "-"}`);
+        detailLines.push(`Sell: ${sell.instrument} @${sell.premium ?? "-"}`);
+        detailLines.push(`Buy: ${buy.instrument} @${buy.premium ?? "-"}`);
       }
-      if (credit !== null) lines.push(`Credit:${credit}  TGT:${tBuyback ?? "-"}  SL:${slBuyback ?? "-"}`);
-      if (sp?.maxLoss != null) lines.push(`Max Loss: ₹${Number(sp.maxLoss).toFixed(0)}`);
+      if (credit !== null) detailLines.push(`Credit: ${credit}   Target: ${tBuyback ?? "-"}   Stop: ${slBuyback ?? "-"}`);
+      if (sp?.maxLoss != null) detailLines.push(`Max Loss: ₹${Number(sp.maxLoss).toFixed(0)}`);
     }
 
-    const conf = s.suggestion?.confidence;
-    if (conf != null) lines.push(`Confidence: ${(Number(conf) * 100).toFixed(1)}%`);
+    const extraLines: string[] = [];
 
-    // Add top pivot levels relative to current price
+    // Top pivot levels relative to current price
     const piv = s.pivotLevels;
     if (piv) {
       const near = ["r2","r1","cpr","s1","s2"].map((k) => piv[k]).filter(Boolean);
       const pivLine = near.map((lv: any) => `${lv.name}:${lv.value.toFixed(0)}(${lv.status})`).join("  ");
-      if (pivLine) lines.push(`Levels: ${pivLine}`);
+      if (pivLine) extraLines.push(`Levels: ${pivLine}`);
     }
 
     // RMS context
     const rms = s.rms;
-    if (rms?.maxDailyLoss != null) lines.push(`Daily Loss Cap: ₹${rms.maxDailyLoss.toLocaleString()}`);
+    if (rms?.maxDailyLoss != null) extraLines.push(`Daily Loss Cap: ₹${rms.maxDailyLoss.toLocaleString()}`);
 
-    return lines;
+    const conf = s.suggestion?.confidence;
+
+    return {
+      asof,
+      action,
+      direction: dir,
+      timeframe: tradeTf,
+      detailLines,
+      confidence: conf != null ? Number(conf) : null,
+      extraLines,
+    };
   }
 
   async maybeSendSignal(snapshot: TelegramSignalSnapshot): Promise<void> {
@@ -895,18 +952,17 @@ export class TelegramNotifier {
     if (this.lastKey === key) return;
     if (now - this.lastSentAt < this.minIntervalMs) return;
 
-    const lines = this.buildSignalCardLines(snapshot);
-    const action = String(snapshot.options?.decision?.action ?? "TRADE SIGNAL");
+    const data = this.buildSignalCardData(snapshot);
 
     try {
-      const png = await renderAlertCardPng({ title: action, lines });
+      const png = await renderSignalCardPng(data);
       for (const chatId of this.chatIds) {
         const result = await sendTelegramPhoto({
           token: this.token as string,
           chatId,
           photoPng: png,
           filename: "signal.png",
-          caption: lines.slice(0, 2).join(" | "),
+          caption: `${data.action}${data.timeframe ? `  ·  ${data.timeframe}` : ""}`,
         });
         if (!result.ok) {
           // eslint-disable-next-line no-console
