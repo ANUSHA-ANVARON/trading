@@ -74,7 +74,7 @@ body{margin:0;font-family:system-ui,-apple-system,'Segoe UI',Roboto,Arial,sans-s
 @media(max-width:960px){.g2{grid-template-columns:1fr}}
 
 /* QUICK STATS — 6 cols */
-.stats{display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin-bottom:12px}
+.stats{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-bottom:12px}
 @media(max-width:900px){.stats{grid-template-columns:repeat(3,1fr)}}
 @media(max-width:600px){.stats{grid-template-columns:repeat(2,1fr)}}
 .sc{background:var(--s2);border:1px solid var(--b1);border-radius:12px;padding:10px 14px}
@@ -230,7 +230,6 @@ tr:hover td{background:rgba(232,236,246,.025)}
 
 <!-- QUICK STATS (6 cols) -->
 <div class="stats">
-  <div class="sc"><div class="sl">Spot Price</div><div class="sv mono" id="stSpot">–</div><div class="ss" id="stSpotSub">–</div></div>
   <div class="sc"><div class="sl">ATM Strike</div><div class="sv mono" id="stATM">–</div><div class="ss" id="stATMsub">CE / PE</div></div>
   <div class="sc"><div class="sl">Futures LTP</div><div class="sv mono" id="stF">–</div><div class="ss" id="stFc">–</div></div>
   <div class="sc"><div class="sl">Breadth Move</div><div class="sv mono" id="stB">–</div><div class="ss" id="stAD">–</div></div>
@@ -531,7 +530,7 @@ tr:hover td{background:rgba(232,236,246,.025)}
 </div><!-- /wrap -->
 
 <script>
-var paused=false, lastSH=[], sigFilt='', lastPredLog=[], lastSpotPx=null;
+var paused=false, lastSH=[], sigFilt='', lastPredLog=[];
 
 // ── Collapsible ────────────────────────────────────────────────────
 function coll(tId,bId){
@@ -978,21 +977,7 @@ function applyUpdate(obj){
   if(e('ad'))e('ad').innerHTML='<span style="color:var(--g2);font-weight:700">▲ '+String(b.advancers||'–')+'</span>&nbsp;<span style="color:var(--r2);font-weight:700">▼ '+String(b.decliners||'–')+'</span>';
   if(e('imb')){e('imb').textContent=imbv==null?'–':fmt(imbv,3);e('imb').className='mono '+(imbv>0.05?'up':imbv<-0.05?'dn':'');}
 
-  // Quick stats (6 cols) — live spot price first, then ATM strike, then futures
-  var _basis=obj.options&&obj.options.atmBasis?obj.options.atmBasis:{};
-  var _spotPx=_basis.price!=null?Number(_basis.price):null;
-  if(e('stSpot')){
-    var _spotEl=e('stSpot');
-    _spotEl.textContent=_spotPx!=null?fmt(_spotPx,2):'–';
-    if(_spotPx!=null&&lastSpotPx!=null&&_spotPx!==lastSpotPx){
-      _spotEl.className='sv mono '+(_spotPx>lastSpotPx?'up':'dn');
-    } else if(_spotPx!=null&&lastSpotPx==null){
-      _spotEl.className='sv mono neu';
-    }
-    if(_spotPx!=null)lastSpotPx=_spotPx;
-  }
-  if(e('stSpotSub'))e('stSpotSub').textContent=_basis.source?(_basis.source==='spot'?'spot ltp':'futures ltp'):'–';
-
+  // Quick stats (5 cols) — ATM strike first, then futures
   var _oa=obj.options&&obj.options.atm?obj.options.atm:{};
   var _ce=_oa.ce||{},_pe=_oa.pe||{};
   var _atmStrike=obj.options&&obj.options.atmStrike!=null?Number(obj.options.atmStrike):null;
