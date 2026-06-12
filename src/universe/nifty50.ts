@@ -40,7 +40,7 @@ export const NIFTY50_SYMBOLS: string[] = [
   "SHRIRAMFIN",
   "SUNPHARMA",
   "TATACONSUM",
-  "TATAMOTORS",
+  "TMCV",
   "TATASTEEL",
   "TCS",
   "TECHM",
