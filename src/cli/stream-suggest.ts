@@ -20,6 +20,8 @@ import type { Candle } from "../core/types";
 import { TelegramNotifier } from "../notify/telegram";
 import { computePivotLevels, type PivotLevelsOutput } from "../analysis/pivotLevels";
 import { computeLifecycle, type LifecycleOutput } from "../analysis/lifecycle";
+import { env } from "../config/env";
+import { persistPrediction, generateDailyReport, toIstDate } from "../storage/predictionLog";
 
 type WithToken = { key: string; weight: number; token: number };
 
@@ -737,6 +739,7 @@ async function main() {
   const MAX_PREDICTIONS = 200;
   let lastPredLong = 0; // ms timestamp of last LONG prediction fired
   let lastPredShort = 0; // ms timestamp of last SHORT prediction fired
+  let lastReportSession = ""; // tracks session state to detect CLOSED transition for report generation
   const PRED_DEBOUNCE_MS = 10 * 60_000; // 10 min — don't re-fire same direction within this window
 
   let spreadLegs:
@@ -1806,15 +1809,17 @@ async function main() {
         const ageMs = Date.now() - new Date(p.asof).getTime();
         const expiryMs = p.timeframe === "1m" ? 15 * 60_000 : p.timeframe === "5m" ? 45 * 60_000 : 90 * 60_000;
         const nowTs = new Date().toISOString();
+        let resolved = false;
         if (p.direction === "LONG") {
-          if (predRefPx >= p.targetPrice) { p.outcome = "TARGET_HIT"; p.outcomePrice = predRefPx; p.outcomeAt = nowTs; p.pnlPoints = +(predRefPx - p.entryPrice).toFixed(2); }
-          else if (predRefPx <= p.stopPrice) { p.outcome = "STOP_HIT"; p.outcomePrice = predRefPx; p.outcomeAt = nowTs; p.pnlPoints = +(predRefPx - p.entryPrice).toFixed(2); }
-          else if (ageMs >= expiryMs) { p.outcome = "EXPIRED"; p.outcomePrice = predRefPx; p.outcomeAt = nowTs; p.pnlPoints = +(predRefPx - p.entryPrice).toFixed(2); }
+          if (predRefPx >= p.targetPrice) { p.outcome = "TARGET_HIT"; p.outcomePrice = predRefPx; p.outcomeAt = nowTs; p.pnlPoints = +(predRefPx - p.entryPrice).toFixed(2); resolved = true; }
+          else if (predRefPx <= p.stopPrice) { p.outcome = "STOP_HIT"; p.outcomePrice = predRefPx; p.outcomeAt = nowTs; p.pnlPoints = +(predRefPx - p.entryPrice).toFixed(2); resolved = true; }
+          else if (ageMs >= expiryMs) { p.outcome = "EXPIRED"; p.outcomePrice = predRefPx; p.outcomeAt = nowTs; p.pnlPoints = +(predRefPx - p.entryPrice).toFixed(2); resolved = true; }
         } else {
-          if (predRefPx <= p.targetPrice) { p.outcome = "TARGET_HIT"; p.outcomePrice = predRefPx; p.outcomeAt = nowTs; p.pnlPoints = +(p.entryPrice - predRefPx).toFixed(2); }
-          else if (predRefPx >= p.stopPrice) { p.outcome = "STOP_HIT"; p.outcomePrice = predRefPx; p.outcomeAt = nowTs; p.pnlPoints = +(p.entryPrice - predRefPx).toFixed(2); }
-          else if (ageMs >= expiryMs) { p.outcome = "EXPIRED"; p.outcomePrice = predRefPx; p.outcomeAt = nowTs; p.pnlPoints = +(p.entryPrice - predRefPx).toFixed(2); }
+          if (predRefPx <= p.targetPrice) { p.outcome = "TARGET_HIT"; p.outcomePrice = predRefPx; p.outcomeAt = nowTs; p.pnlPoints = +(p.entryPrice - predRefPx).toFixed(2); resolved = true; }
+          else if (predRefPx >= p.stopPrice) { p.outcome = "STOP_HIT"; p.outcomePrice = predRefPx; p.outcomeAt = nowTs; p.pnlPoints = +(p.entryPrice - predRefPx).toFixed(2); resolved = true; }
+          else if (ageMs >= expiryMs) { p.outcome = "EXPIRED"; p.outcomePrice = predRefPx; p.outcomeAt = nowTs; p.pnlPoints = +(p.entryPrice - predRefPx).toFixed(2); resolved = true; }
         }
+        if (resolved) persistPrediction(p as any, env.PREDICTIONS_DIR).catch(() => {});
       }
     }
 
@@ -1899,6 +1904,7 @@ async function main() {
         predictionLog.unshift(entry);
         if (predictionLog.length > MAX_PREDICTIONS) predictionLog.pop();
         if (dir === "LONG") lastPredLong = nowMs; else lastPredShort = nowMs;
+        persistPrediction(entry as any, env.PREDICTIONS_DIR).catch(() => {});
       }
     }
 
@@ -2163,6 +2169,17 @@ async function main() {
         }
       }
     }
+
+    // Generate daily Markdown report when session transitions to CLOSED.
+    const currentSession = String(snap.lifecycle?.session ?? "");
+    if (currentSession === "CLOSED" && lastReportSession !== "CLOSED") {
+      const today = toIstDate(new Date().toISOString());
+      generateDailyReport(today, env.PREDICTIONS_DIR).then((file) => {
+        // eslint-disable-next-line no-console
+        console.error(JSON.stringify({ event: "daily_report_generated", date: today, file }));
+      }).catch(() => {});
+    }
+    lastReportSession = currentSession;
   }, intervalMs);
 
   process.on("SIGINT", () => {

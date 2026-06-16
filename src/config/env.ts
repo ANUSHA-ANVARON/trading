@@ -22,6 +22,7 @@ const envSchema = z.object({
   KITE_SESSION_PATH: z.string().min(1).default("data/session.json"),
   KITE_INSTRUMENTS_DIR: z.string().min(1).default("data/instruments"),
   KITE_SNAPSHOTS_PATH: z.string().min(1).default("data/snapshots.json"),
+  PREDICTIONS_DIR: z.string().min(1).default("data/predictions"),
 
   // Optional: Telegram alerts for signals.
   TELEGRAM_BOT_TOKEN: z.string().min(1).optional(),
@@ -38,6 +39,7 @@ export const env: Env = envSchema.parse({
   KITE_SESSION_PATH: cleanEnvString(process.env.KITE_SESSION_PATH) ?? "data/session.json",
   KITE_INSTRUMENTS_DIR: cleanEnvString(process.env.KITE_INSTRUMENTS_DIR) ?? "data/instruments",
   KITE_SNAPSHOTS_PATH: cleanEnvString(process.env.KITE_SNAPSHOTS_PATH) ?? "data/snapshots.json",
+  PREDICTIONS_DIR: cleanEnvString(process.env.PREDICTIONS_DIR) ?? "data/predictions",
 
   TELEGRAM_BOT_TOKEN: cleanEnvString(process.env.TELEGRAM_BOT_TOKEN),
   TELEGRAM_CHAT_ID: cleanEnvString(process.env.TELEGRAM_CHAT_ID),
