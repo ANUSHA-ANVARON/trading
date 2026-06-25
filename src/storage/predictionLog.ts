@@ -1,5 +1,16 @@
 import { promises as fs } from "fs";
 import * as path from "path";
+import { env } from "../config/env";
+
+// Lazy Convex client — created once when CONVEX_URL is available.
+let _convex: any = null;
+async function getConvexClient(): Promise<any | null> {
+  if (!env.CONVEX_URL) return null;
+  if (_convex) return _convex;
+  const { ConvexHttpClient } = await import("convex/browser");
+  _convex = new ConvexHttpClient(env.CONVEX_URL);
+  return _convex;
+}
 
 export type PredictionLogEntry = {
   id: string;
@@ -58,18 +69,88 @@ async function writeLog(file: string, entries: PredictionLogEntry[]): Promise<vo
   await fs.writeFile(file, JSON.stringify(entries, null, 2), "utf8");
 }
 
-// Upsert a prediction into the daily JSON log (insert or update in-place by id).
+// Upsert a prediction. Writes to Convex when CONVEX_URL is set, always also
+// writes to the local JSON file as a backup.
 export async function persistPrediction(entry: PredictionLogEntry, predictionsDir: string): Promise<void> {
   const date = toIstDate(entry.asof);
+
+  // Convex (primary when configured)
+  const convex = await getConvexClient();
+  if (convex) {
+    try {
+      const { api } = await import("../convex/_generated/api");
+      await convex.mutation(api.predictions.upsertPrediction, {
+        predId:      entry.id,
+        date,
+        asof:        entry.asof,
+        timeframe:   entry.timeframe,
+        direction:   entry.direction,
+        entryPrice:  entry.entryPrice,
+        targetPrice: entry.targetPrice,
+        stopPrice:   entry.stopPrice,
+        confidence:  entry.confidence,
+        lifecycle:   entry.lifecycle,
+        session:     entry.session,
+        signals:     entry.signals,
+        outcome:     entry.outcome,
+        outcomePrice: entry.outcomePrice,
+        outcomeAt:   entry.outcomeAt,
+        pnlPoints:   entry.pnlPoints,
+      });
+    } catch {
+      // fall through to file backup
+    }
+  }
+
+  // File backup (always)
   const file = jsonPath(predictionsDir, date);
   const entries = await readLog(file);
   const idx = entries.findIndex((e) => e.id === entry.id);
-  if (idx >= 0) {
-    entries[idx] = entry;
-  } else {
-    entries.unshift(entry);
+  if (idx >= 0) entries[idx] = entry; else entries.unshift(entry);
+  await writeLog(file, entries).catch(() => {});
+}
+
+// Fetch predictions for a given date from Convex (or local file as fallback).
+export async function fetchPredictionsByDate(date: string, predictionsDir: string): Promise<PredictionLogEntry[]> {
+  const convex = await getConvexClient();
+  if (convex) {
+    try {
+      const { api } = await import("../convex/_generated/api");
+      const rows: any[] = await convex.query(api.predictions.getByDate, { date });
+      return rows.map((r: any) => ({
+        id: r.predId, asof: r.asof, timeframe: r.timeframe, direction: r.direction,
+        entryPrice: r.entryPrice, targetPrice: r.targetPrice, stopPrice: r.stopPrice,
+        confidence: r.confidence, lifecycle: r.lifecycle, session: r.session,
+        signals: r.signals, outcome: r.outcome, outcomePrice: r.outcomePrice ?? null,
+        outcomeAt: r.outcomeAt ?? null, pnlPoints: r.pnlPoints ?? null,
+      })) as PredictionLogEntry[];
+    } catch { /* fall through */ }
   }
-  await writeLog(file, entries);
+  // File fallback
+  const entries = await readLog(jsonPath(predictionsDir, date));
+  return entries.sort((a, b) => a.asof.localeCompare(b.asof));
+}
+
+// Return dates for which predictions exist (Convex or local files).
+export async function fetchAvailableDates(predictionsDir: string): Promise<string[]> {
+  const convex = await getConvexClient();
+  if (convex) {
+    try {
+      const { api } = await import("../convex/_generated/api");
+      return await convex.query(api.predictions.getAvailableDates, {});
+    } catch { /* fall through */ }
+  }
+  // File fallback: scan directory for YYYY-MM-DD.json files
+  try {
+    const files = await fs.readdir(predictionsDir);
+    return files
+      .filter((f) => /^\d{4}-\d{2}-\d{2}\.json$/.test(f))
+      .map((f) => f.replace(".json", ""))
+      .sort()
+      .reverse();
+  } catch {
+    return [];
+  }
 }
 
 // Generate a Markdown report from the daily JSON log. Returns the path to the .md file.

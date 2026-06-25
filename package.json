@@ -32,6 +32,7 @@
   "dependencies": {
     "@fontsource/dejavu-sans": "^5.2.5",
     "@napi-rs/canvas": "^0.1.80",
+    "convex": "^1.42.0",
     "dotenv": "^16.4.5",
     "fast-xml-parser": "^4.5.5",
     "kiteconnect": "^5.1.0",

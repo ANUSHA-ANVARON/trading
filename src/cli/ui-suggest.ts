@@ -220,6 +220,7 @@ tr:hover td{background:rgba(232,236,246,.025)}
       <span class="asof" id="asof">–</span>
       <button class="btn" id="btnPause">⏸ Pause</button>
       <button class="btn" id="btnResume" disabled>▶ Resume</button>
+      <a href="/report" class="btn btn-a" style="text-decoration:none;font-size:11px">📊 Report</a>
       <a href="/token" class="btn btn-a" style="text-decoration:none;font-size:11px">🔑 Kite Auth</a>
       <a href="/logout" class="btn" style="text-decoration:none;color:rgba(232,236,246,.45);font-size:11px">Sign out</a>
     </div>
@@ -1070,6 +1071,150 @@ connect();
 </html>`;
 }
 
+function reportPage(): string {
+  return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AlgoBot · Prediction Report</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#09090b;color:#e8ecf6;font-family:system-ui,-apple-system,'Segoe UI',sans-serif;font-size:14px;min-height:100vh}
+.nav{background:#0d1117;border-bottom:1px solid #1f2937;padding:12px 24px;display:flex;align-items:center;gap:16px}
+.nav-logo{font-size:20px;font-weight:800;color:#d4a574;letter-spacing:1px}
+.nav a{color:#9ca3af;text-decoration:none;font-size:13px}
+.nav a:hover{color:#e8ecf6}
+.wrap{max-width:1100px;margin:0 auto;padding:24px 16px}
+h1{font-size:22px;font-weight:700;margin-bottom:20px;color:#e8ecf6}
+.controls{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:24px}
+.controls select,.controls input[type=date]{background:#0d1117;border:1px solid #1f2937;color:#e8ecf6;padding:8px 14px;border-radius:8px;font-size:13px;outline:none}
+.controls button{background:#d4a574;color:#09090b;border:none;padding:8px 18px;border-radius:8px;font-weight:700;cursor:pointer;font-size:13px}
+.controls button:hover{background:#e8bc8e}
+.summary{display:grid;grid-template-columns:repeat(6,1fr);gap:10px;margin-bottom:24px}
+@media(max-width:700px){.summary{grid-template-columns:repeat(3,1fr)}}
+.scard{background:#0d1117;border:1px solid #1f2937;border-radius:10px;padding:12px 16px}
+.scard .sl{font-size:10px;color:#6b7280;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px}
+.scard .sv{font-size:22px;font-weight:800}
+.up{color:#22c55e}.dn{color:#ef4444}.neu{color:#f59e0b}.dim{color:#9ca3af}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;padding:10px 12px;background:#0d1117;color:#6b7280;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.4px;border-bottom:1px solid #1f2937;white-space:nowrap}
+td{padding:9px 12px;border-bottom:1px solid #111827;vertical-align:middle}
+tr:hover td{background:rgba(232,236,246,.03)}
+.pill{display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:700}
+.pT{background:rgba(34,197,94,.15);color:#22c55e}
+.pS{background:rgba(239,68,68,.15);color:#ef4444}
+.pE{background:rgba(245,158,11,.12);color:#f59e0b}
+.pP{background:rgba(99,102,241,.12);color:#818cf8}
+.mono{font-family:monospace}
+.empty{text-align:center;padding:48px;color:#4b5563}
+#loader{text-align:center;padding:48px;color:#6b7280}
+.section{background:#0d1117;border:1px solid #1f2937;border-radius:12px;overflow:hidden;margin-bottom:20px}
+.section-title{padding:14px 18px;border-bottom:1px solid #1f2937;font-weight:600;font-size:13px;color:#d4a574}
+</style>
+</head>
+<body>
+<div class="nav">
+  <div class="nav-logo">ALGOBOT</div>
+  <a href="/">← Live Dashboard</a>
+  <span style="color:#374151;font-size:12px">|</span>
+  <span style="color:#9ca3af;font-size:13px">Prediction Report</span>
+</div>
+<div class="wrap">
+  <h1>Prediction Report</h1>
+  <div class="controls">
+    <select id="dateSelect"><option value="">-- select a date --</option></select>
+    <span style="color:#4b5563">or</span>
+    <input type="date" id="datePicker">
+    <button onclick="loadReport()">Load Report</button>
+  </div>
+  <div id="loader" style="display:none">Loading…</div>
+  <div id="summary" class="summary" style="display:none"></div>
+  <div id="reportArea"></div>
+</div>
+<script>
+async function loadDates(){
+  try{
+    const r=await fetch('/api/report-dates');
+    const dates=await r.json();
+    const sel=document.getElementById('dateSelect');
+    dates.forEach(d=>{const o=document.createElement('option');o.value=d;o.textContent=d;sel.appendChild(o);});
+  }catch(e){}
+}
+function fmt(n,d){if(n==null||!isFinite(Number(n)))return '–';return Number(n).toFixed(d!=null?d:2);}
+function pnlStr(n){if(n==null)return '–';return (n>=0?'+':'')+fmt(n);}
+function outcomeHtml(o){
+  if(o==='TARGET_HIT')return '<span class="pill pT">✅ TARGET</span>';
+  if(o==='STOP_HIT')return '<span class="pill pS">❌ STOP</span>';
+  if(o==='EXPIRED')return '<span class="pill pE">⏰ EXPIRED</span>';
+  return '<span class="pill pP">⏳ PENDING</span>';
+}
+function dirHtml(d){return d==='LONG'?'<span class="up">▲ LONG</span>':'<span class="dn">▼ SHORT</span>';}
+function toIST(iso){if(!iso)return '–';const d=new Date(new Date(iso).getTime()+5.5*3600000);return d.toISOString().slice(11,16)+' IST';}
+async function loadReport(){
+  const sel=document.getElementById('dateSelect');
+  const picker=document.getElementById('datePicker');
+  const date=(picker.value||sel.value||'').trim();
+  if(!date){alert('Please select or enter a date');return;}
+  document.getElementById('loader').style.display='block';
+  document.getElementById('summary').style.display='none';
+  document.getElementById('reportArea').innerHTML='';
+  try{
+    const r=await fetch('/api/predictions?date='+encodeURIComponent(date));
+    const rows=await r.json();
+    document.getElementById('loader').style.display='none';
+    if(!Array.isArray(rows)||!rows.length){document.getElementById('reportArea').innerHTML='<div class="empty">No predictions found for '+date+'</div>';return;}
+    // Summary
+    const hits=rows.filter(r=>r.outcome==='TARGET_HIT').length;
+    const stops=rows.filter(r=>r.outcome==='STOP_HIT').length;
+    const exp=rows.filter(r=>r.outcome==='EXPIRED').length;
+    const pend=rows.filter(r=>r.outcome==='PENDING').length;
+    const resolved=rows.filter(r=>r.outcome!=='PENDING');
+    const winRate=resolved.length?Math.round(hits/resolved.length*100):null;
+    const netPnl=resolved.reduce((s,r)=>s+(r.pnlPoints||0),0);
+    const longs=rows.filter(r=>r.direction==='LONG').length;
+    const shorts=rows.filter(r=>r.direction==='SHORT').length;
+    const summEl=document.getElementById('summary');
+    summEl.style.display='';
+    summEl.innerHTML=
+      '<div class="scard"><div class="sl">Total</div><div class="sv dim">'+rows.length+'</div></div>'+
+      '<div class="scard"><div class="sl">Target Hit</div><div class="sv up">'+hits+'</div></div>'+
+      '<div class="scard"><div class="sl">Stop Hit</div><div class="sv dn">'+stops+'</div></div>'+
+      '<div class="scard"><div class="sl">Win Rate</div><div class="sv '+(winRate>=50?'up':'dn')+'">'+( winRate!=null?winRate+'%':'–')+'</div></div>'+
+      '<div class="scard"><div class="sl">Net P&amp;L</div><div class="sv '+(netPnl>=0?'up':'dn')+'">'+pnlStr(netPnl)+' pts</div></div>'+
+      '<div class="scard"><div class="sl">L / S</div><div class="sv dim">'+longs+' / '+shorts+'</div></div>';
+    // Predictions table
+    let html='<div class="section"><div class="section-title">Predictions — '+date+'</div><div style="overflow-x:auto"><table><thead><tr>'+
+      '<th>Time</th><th>Dir</th><th>TF</th><th>Entry</th><th>Target</th><th>Stop</th><th>Conf</th><th>Session</th><th>Outcome</th><th>Exit</th><th>P&L (pts)</th><th>Resolved</th></tr></thead><tbody>';
+    rows.forEach(p=>{
+      const pnlCls=p.pnlPoints>0?'up':p.pnlPoints<0?'dn':'dim';
+      html+='<tr><td class="mono">'+toIST(p.asof)+'</td><td>'+dirHtml(p.direction)+'</td><td class="mono">'+p.timeframe+'</td>'+
+        '<td class="mono">'+fmt(p.entryPrice)+'</td><td class="mono up">'+fmt(p.targetPrice)+'</td><td class="mono dn">'+fmt(p.stopPrice)+'</td>'+
+        '<td class="mono">'+(p.confidence*100).toFixed(0)+'%</td><td>'+p.session.replace(/_/g,' ')+'</td>'+
+        '<td>'+outcomeHtml(p.outcome)+'</td><td class="mono">'+fmt(p.outcomePrice)+'</td>'+
+        '<td class="mono '+pnlCls+'">'+pnlStr(p.pnlPoints)+'</td><td class="mono">'+toIST(p.outcomeAt)+'</td></tr>';
+    });
+    html+='</tbody></table></div></div>';
+    // Signal context table
+    html+='<div class="section"><div class="section-title">Signal Context</div><div style="overflow-x:auto"><table><thead><tr>'+
+      '<th>Time</th><th>Dir</th><th>RSI 5m</th><th>RSI 15m</th><th>BB%B 5m</th><th>Breadth</th><th>TF Agree</th><th>Spartan</th><th>Surf</th><th>Lifecycle</th></tr></thead><tbody>';
+    rows.forEach(p=>{
+      const s=p.signals;
+      html+='<tr><td class="mono">'+toIST(p.asof)+'</td><td>'+dirHtml(p.direction)+'</td>'+
+        '<td class="mono">'+fmt(s.rsi5m,1)+'</td><td class="mono">'+fmt(s.rsi15m,1)+'</td>'+
+        '<td class="mono">'+(s.bbPctB5m!=null?(s.bbPctB5m*100).toFixed(0)+'%':'–')+'</td>'+
+        '<td class="mono">'+fmt(s.breadthMove,3)+'%</td><td class="mono">'+s.tfAgree+'/3</td>'+
+        '<td class="mono '+(s.spartanNet>0?'up':s.spartanNet<0?'dn':'')+'">'+( s.spartanNet>=0?'+':'')+s.spartanNet+'</td>'+
+        '<td class="mono '+(s.surfNet>0?'up':s.surfNet<0?'dn':'')+'">'+( s.surfNet>=0?'+':'')+s.surfNet+'</td>'+
+        '<td>'+p.lifecycle.replace(/_/g,' ')+'</td></tr>';
+    });
+    html+='</tbody></table></div></div>';
+    document.getElementById('reportArea').innerHTML=html;
+  }catch(e){document.getElementById('loader').style.display='none';document.getElementById('reportArea').innerHTML='<div class="empty">Error loading report: '+e+'</div>';}
+}
+document.getElementById('dateSelect').onchange=function(){if(this.value)document.getElementById('datePicker').value='';};
+document.getElementById('datePicker').onchange=function(){if(this.value)document.getElementById('dateSelect').value='';};
+loadDates();
+</script>
+</body></html>`;
+}
+
 function startSuggestProcess(args: string[]): ChildProcessWithoutNullStreams {
   const nodeBin = process.execPath;
   const tsxCli = path.join(process.cwd(), "node_modules", "tsx", "dist", "cli.mjs");
@@ -1399,7 +1544,38 @@ ${ok ? '<p style="color:#aaa">Token saved. Engine restarting — go back to the 
     }
 
     if (url === "/") { res.writeHead(200, { "content-type": "text/html; charset=utf-8" }); res.end(htmlPage({ title: "Live Trade Suggestion" })); return; }
+    if (url === "/report" || url === "/report/") { res.writeHead(200, { "content-type": "text/html; charset=utf-8" }); res.end(reportPage()); return; }
     if (url === "/health") { res.writeHead(200, { "content-type": "application/json; charset=utf-8" }); res.end(JSON.stringify({ ok: true, app: "kite-fo-ui", clients: clients.size, engineRunning: childRunning, lastEngineExit, lastEngineError })); return; }
+
+    if (url?.startsWith("/api/predictions")) {
+      const qs = url.includes("?") ? url.slice(url.indexOf("?") + 1) : "";
+      const params = Object.fromEntries(new URLSearchParams(qs));
+      const date = params["date"] ?? "";
+      if (!date) { res.writeHead(400, { "content-type": "application/json" }); res.end(JSON.stringify({ error: "missing date" })); return; }
+      try {
+        const { fetchPredictionsByDate } = await import("../storage/predictionLog");
+        const { env: cfg } = await import("../config/env");
+        const rows = await fetchPredictionsByDate(date, cfg.PREDICTIONS_DIR);
+        res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+        res.end(JSON.stringify(rows));
+      } catch (e) {
+        res.writeHead(500, { "content-type": "application/json" }); res.end(JSON.stringify({ error: String(e) }));
+      }
+      return;
+    }
+
+    if (url?.startsWith("/api/report-dates")) {
+      try {
+        const { fetchAvailableDates } = await import("../storage/predictionLog");
+        const { env: cfg } = await import("../config/env");
+        const dates = await fetchAvailableDates(cfg.PREDICTIONS_DIR);
+        res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+        res.end(JSON.stringify(dates));
+      } catch (e) {
+        res.writeHead(500, { "content-type": "application/json" }); res.end(JSON.stringify({ error: String(e) }));
+      }
+      return;
+    }
     if (url === "/events") {
       ensureChild();
       const id = nowId();
@@ -1423,6 +1599,37 @@ ${ok ? '<p style="color:#aaa">Token saved. Engine restarting — go back to the 
     res.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
     res.end("Not found");
   });
+
+  // Auto-start: check every minute if it's a weekday in market hours and a valid
+  // Kite token exists — if so, start the engine without any manual trigger.
+  async function hasValidKiteToken(): Promise<boolean> {
+    if (process.env.KITE_ACCESS_TOKEN?.trim()) return true;
+    try {
+      const { readJsonIfExists } = await import("../storage/session");
+      const { env: cfg } = await import("../config/env");
+      const s = await readJsonIfExists<{ accessToken: string; createdAt: string }>(cfg.KITE_SESSION_PATH);
+      if (!s?.accessToken) return false;
+      // Token is created fresh each day — valid only if created within the last 20 hours
+      const ageMs = Date.now() - new Date(s.createdAt).getTime();
+      return ageMs < 20 * 3600_000;
+    } catch { return false; }
+  }
+
+  setInterval(async () => {
+    if (childRunning) return;
+    const now = new Date();
+    const ist = new Date(now.getTime() + 5.5 * 3600_000);
+    const day = ist.getUTCDay(); // 0=Sun, 6=Sat
+    if (day === 0 || day === 6) return; // weekend
+    const h = ist.getUTCHours(), m = ist.getUTCMinutes();
+    const mins = h * 60 + m;
+    if (mins < 9 * 60 + 14 || mins > 15 * 60 + 32) return; // outside 09:14–15:32 IST
+    if (await hasValidKiteToken()) {
+      // eslint-disable-next-line no-console
+      console.error(JSON.stringify({ event: "auto_start", ist: `${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")} IST` }));
+      ensureChild();
+    }
+  }, 60_000);
 
   function startOnPort(port: number) {
     server.listen(port, "0.0.0.0", () => {
