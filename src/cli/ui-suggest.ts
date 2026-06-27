@@ -74,7 +74,7 @@ body{margin:0;font-family:system-ui,-apple-system,'Segoe UI',Roboto,Arial,sans-s
 @media(max-width:960px){.g2{grid-template-columns:1fr}}
 
 /* QUICK STATS — 6 cols */
-.stats{display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin-bottom:12px}
+.stats{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-bottom:12px}
 @media(max-width:900px){.stats{grid-template-columns:repeat(3,1fr)}}
 @media(max-width:600px){.stats{grid-template-columns:repeat(2,1fr)}}
 .sc{background:var(--s2);border:1px solid var(--b1);border-radius:12px;padding:10px 14px}
@@ -232,7 +232,6 @@ tr:hover td{background:rgba(232,236,246,.025)}
 <!-- QUICK STATS (6 cols) -->
 <div class="stats">
   <div class="sc"><div class="sl">Spot Price</div><div class="sv mono" id="stSpot">–</div><div class="ss" id="stSpotSub">–</div></div>
-  <div class="sc"><div class="sl">ATM Strike</div><div class="sv mono" id="stATM">–</div><div class="ss" id="stATMsub">CE / PE</div></div>
   <div class="sc"><div class="sl">Futures LTP</div><div class="sv mono" id="stF">–</div><div class="ss" id="stFc">–</div></div>
   <div class="sc"><div class="sl">Breadth Move</div><div class="sv mono" id="stB">–</div><div class="ss" id="stAD">–</div></div>
   <div class="sc"><div class="sl">Buy/Sell Imb</div><div class="sv mono" id="stI">–</div><div class="ss">depth imbalance</div></div>
