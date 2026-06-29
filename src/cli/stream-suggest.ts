@@ -5,7 +5,7 @@ import { analyzeBreadthFromTicks } from "../analysis/breadthFromTicks";
 import { equalWeightsForNifty50 } from "../analysis/weightsFallback";
 import { pickNearExpiryNiftyFutureKey } from "../analysis/defaults";
 import { pickNearestWeeklyNiftyOptionExpiry } from "../analysis/defaults";
-import { sma, rsi, atr, bollingerBands } from "../analysis/indicators";
+import { sma, ema, dema, wma, rsi, macd, momentum, tsi, atr, bollingerBands, stdDev, historicalVolatility, linearRegressionCurve, pvt, vwap, asi } from "../analysis/indicators";
 import { CandleAggregator } from "../live/candleAggregator";
 import { getInstruments } from "../instruments/instrumentsCache";
 import { createKiteTicker } from "../kite/ticker";
@@ -444,6 +444,7 @@ function scoreSuggestion(input: {
   futChangePct: number;
   winRateEstimate: number;
   aggressive: boolean;
+  vix?: number | null;
 }): any {
   const closes = input.candles.map((c) => c.close);
 
@@ -560,6 +561,23 @@ function scoreSuggestion(input: {
       ? clamp((aligned / total) * 0.4, 0, 0.45)
       : clamp(0.35 + (aligned / total) * 0.35 + (probability ?? 0.5) * 0.3, 0, 0.95);
 
+  // Extended indicators — computed for display; do not change the 6-condition gate above
+  const n = input.candles;
+  const ema9   = ema(closes, 9);
+  const ema21  = ema(closes, 21);
+  const dema21 = dema(closes, 21);
+  const wma21  = wma(closes, 21);
+  const lrc20  = linearRegressionCurve(closes, 20);
+  const macdR  = macd(closes);
+  const mom10  = momentum(closes, 10);
+  const tsiR   = tsi(closes);
+  const sd20   = stdDev(closes, 20);
+  const hv20   = historicalVolatility(closes, 20);
+  const pvtVal = pvt(n);
+  const vwapVal= vwap(n, 20);
+  const asiVal = asi(n);
+  const lastVol = n.length ? (n[n.length - 1].volume ?? null) : null;
+
   return {
     timeframe: input.tfLabel,
     recommendation,
@@ -567,6 +585,7 @@ function scoreSuggestion(input: {
     probability: probability === null ? null : Number(probability.toFixed(3)),
     winning_percentage: winning_percentage === null ? null : Number(winning_percentage.toFixed(2)),
     signals: {
+      // Core scoring signals
       trend,
       fastSma: fastSma === null ? null : Number(fastSma.toFixed(2)),
       slowSma: slowSma === null ? null : Number(slowSma.toFixed(2)),
@@ -576,6 +595,23 @@ function scoreSuggestion(input: {
       breadthWeightedMovePct: Number(input.breadth.weighted_move_pct.toFixed(3)),
       advDec: Number(advDec.toFixed(3)),
       futChangePct: Number(input.futChangePct.toFixed(3)),
+      // Extended indicators
+      ema9:  ema9  === null ? null : Number(ema9.toFixed(2)),
+      ema21: ema21 === null ? null : Number(ema21.toFixed(2)),
+      emaCross: ema9 !== null && ema21 !== null ? (ema9 > ema21 ? "BULL" : ema9 < ema21 ? "BEAR" : "FLAT") : null,
+      dema21: dema21 === null ? null : Number(dema21.toFixed(2)),
+      wma21:  wma21  === null ? null : Number(wma21.toFixed(2)),
+      lrc20:  lrc20  === null ? null : Number(lrc20.toFixed(2)),
+      macd:   macdR  ?? null,
+      mom10:  mom10  === null ? null : Number(mom10.toFixed(2)),
+      tsi:    tsiR   ?? null,
+      stdDev20: sd20 === null ? null : Number(sd20),
+      hv20:   hv20   ?? null,
+      pvt:    pvtVal ?? null,
+      vwap20: vwapVal ?? null,
+      asi:    asiVal  ?? null,
+      volume: lastVol,
+      vix:    input.vix ?? null,
     },
     reasoning: reasons,
   };
@@ -957,12 +993,14 @@ async function main() {
       }
 
       if (token === fut.token) {
-        const ts = t.exchange_timestamp ?? t.timestamp ?? new Date();
-        const px = Number(t.last_price);
+        const ts  = t.exchange_timestamp ?? t.timestamp ?? new Date();
+        const px  = Number(t.last_price);
+        const vol = typeof t.volume_traded === "number" ? t.volume_traded
+                  : typeof t.volume === "number" ? t.volume : undefined;
         if (Number.isFinite(px)) {
-          agg1m.onTick(px, ts);
-          agg5m.onTick(px, ts);
-          agg15m.onTick(px, ts);
+          agg1m.onTick(px, ts, vol);
+          agg5m.onTick(px, ts, vol);
+          agg15m.onTick(px, ts, vol);
         }
       }
     }
@@ -1032,34 +1070,25 @@ async function main() {
     const s1Raw = scoreSuggestion({
       tfLabel: "1m",
       candles: c1,
-      fast,
-      slow,
-      breadth,
-      futChangePct,
+      fast, slow, breadth, futChangePct,
       winRateEstimate: wr1m.winRate,
-      aggressive,
+      aggressive, vix: vixValue,
     });
 
     const s5Raw = scoreSuggestion({
       tfLabel: "5m",
       candles: c5,
-      fast,
-      slow,
-      breadth,
-      futChangePct,
+      fast, slow, breadth, futChangePct,
       winRateEstimate: wr5m.winRate,
-      aggressive,
+      aggressive, vix: vixValue,
     });
 
     const s15Raw = scoreSuggestion({
       tfLabel: "15m",
       candles: c15,
-      fast,
-      slow,
-      breadth,
-      futChangePct,
+      fast, slow, breadth, futChangePct,
       winRateEstimate: wr15m.winRate,
-      aggressive,
+      aggressive, vix: vixValue,
     });
 
     // Confluence-based PnC: adjust 5m/15m using agreement from other timeframes.

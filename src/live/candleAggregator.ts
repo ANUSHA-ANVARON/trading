@@ -15,6 +15,8 @@ export class CandleAggregator {
         high: number;
         low: number;
         close: number;
+        volStart: number;   // cumulative volume at candle open
+        volLast: number;    // latest cumulative volume seen
       }
     | null = null;
 
@@ -28,34 +30,36 @@ export class CandleAggregator {
     this.maxCandles = params.maxCandles ?? 600;
   }
 
-  onTick(price: number, ts: Date): void {
+  onTick(price: number, ts: Date, volume?: number): void {
     if (!Number.isFinite(price)) return;
     const tsMs = ts.getTime();
     const bucketStartMs = floorToBucketMs(tsMs, this.bucketMs);
+    const vol = typeof volume === "number" && Number.isFinite(volume) ? volume : 0;
 
     if (!this.current) {
-      this.current = { bucketStartMs, open: price, high: price, low: price, close: price };
+      this.current = { bucketStartMs, open: price, high: price, low: price, close: price, volStart: vol, volLast: vol };
       return;
     }
 
     if (bucketStartMs !== this.current.bucketStartMs) {
-      // finalize previous bucket
+      // Finalise previous bucket — volume delta for the period
       this.closed.push({
-        time: new Date(this.current.bucketStartMs).toISOString(),
-        open: this.current.open,
-        high: this.current.high,
-        low: this.current.low,
-        close: this.current.close,
+        time:   new Date(this.current.bucketStartMs).toISOString(),
+        open:   this.current.open,
+        high:   this.current.high,
+        low:    this.current.low,
+        close:  this.current.close,
+        volume: Math.max(0, this.current.volLast - this.current.volStart),
       });
       if (this.closed.length > this.maxCandles) this.closed.splice(0, this.closed.length - this.maxCandles);
-
-      this.current = { bucketStartMs, open: price, high: price, low: price, close: price };
+      this.current = { bucketStartMs, open: price, high: price, low: price, close: price, volStart: vol, volLast: vol };
       return;
     }
 
-    this.current.high = Math.max(this.current.high, price);
-    this.current.low = Math.min(this.current.low, price);
+    this.current.high  = Math.max(this.current.high, price);
+    this.current.low   = Math.min(this.current.low,  price);
     this.current.close = price;
+    if (vol > this.current.volLast) this.current.volLast = vol;
   }
 
   getClosedCandles(): Candle[] {
@@ -68,11 +72,9 @@ export class CandleAggregator {
 
   seedClosedCandles(candles: Candle[]): void {
     if (!Array.isArray(candles) || candles.length === 0) return;
-
     const normalized = candles
       .filter((c) => c && Number.isFinite(c.open) && Number.isFinite(c.high) && Number.isFinite(c.low) && Number.isFinite(c.close) && !!c.time)
       .slice(-this.maxCandles);
-
     this.closed.splice(0, this.closed.length, ...normalized);
   }
 }

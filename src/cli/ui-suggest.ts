@@ -514,16 +514,16 @@ tr:hover td{background:rgba(232,236,246,.025)}
   <div class="cbody cls" id="rsnBody" style="max-height:0">
     <!-- Indicator grid: one column per TF -->
     <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:14px">
-      <div id="indPanel1m" style="background:var(--b1);border-radius:6px;padding:10px">
-        <div style="font-size:10px;font-weight:700;letter-spacing:.7px;text-transform:uppercase;color:var(--m);margin-bottom:8px">1m Indicators</div>
+      <div id="indPanel1m" style="background:var(--b1);border-radius:6px;padding:10px;max-height:520px;overflow-y:auto">
+        <div style="font-size:10px;font-weight:700;letter-spacing:.7px;text-transform:uppercase;color:var(--m);margin-bottom:4px;position:sticky;top:0;background:var(--b1);padding-bottom:4px">1m Indicators</div>
         <div id="indRows1m"></div>
       </div>
-      <div id="indPanel5m" style="background:var(--b1);border-radius:6px;padding:10px">
-        <div style="font-size:10px;font-weight:700;letter-spacing:.7px;text-transform:uppercase;color:var(--m);margin-bottom:8px">5m Indicators</div>
+      <div id="indPanel5m" style="background:var(--b1);border-radius:6px;padding:10px;max-height:520px;overflow-y:auto">
+        <div style="font-size:10px;font-weight:700;letter-spacing:.7px;text-transform:uppercase;color:var(--m);margin-bottom:4px;position:sticky;top:0;background:var(--b1);padding-bottom:4px">5m Indicators</div>
         <div id="indRows5m"></div>
       </div>
-      <div id="indPanel15m" style="background:var(--b1);border-radius:6px;padding:10px">
-        <div style="font-size:10px;font-weight:700;letter-spacing:.7px;text-transform:uppercase;color:var(--m);margin-bottom:8px">15m Indicators</div>
+      <div id="indPanel15m" style="background:var(--b1);border-radius:6px;padding:10px;max-height:520px;overflow-y:auto">
+        <div style="font-size:10px;font-weight:700;letter-spacing:.7px;text-transform:uppercase;color:var(--m);margin-bottom:4px;position:sticky;top:0;background:var(--b1);padding-bottom:4px">15m Indicators</div>
         <div id="indRows15m"></div>
       </div>
     </div>
@@ -986,30 +986,75 @@ function renderIndRow(label,val,cls){
     '<span class="mono" style="font-size:12px;font-weight:700'+(cls?';color:'+cls:'')+'">'+val+'</span></div>';
 }
 
+function indSec(title){
+  return '<div style="font-size:9px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;color:#4b5563;margin:8px 0 3px">'+title+'</div>';
+}
+
 function renderIndPanel(tfKey,sig){
   var el=e('indRows'+tfKey);if(!el)return;
   if(!sig){el.innerHTML='<div style="font-size:11px;color:var(--m)">warming up…</div>';return;}
   var rows='';
-  var trend=sig.trend||'–';
-  var tCol=trend==='BULL'?'var(--g)':trend==='BEAR'?'var(--r)':'var(--m)';
-  rows+=renderIndRow('Trend',trend,tCol);
-  rows+=renderIndRow('Fast SMA',sig.fastSma!=null?Number(sig.fastSma).toFixed(1):'–','');
-  rows+=renderIndRow('Slow SMA',sig.slowSma!=null?Number(sig.slowSma).toFixed(1):'–','');
-  var rsi=sig.rsi14!=null?Number(sig.rsi14).toFixed(1):'–';
-  var rCol=sig.rsi14!=null?(sig.rsi14>=60?'var(--g)':sig.rsi14<=40?'var(--r)':''):'';
-  rows+=renderIndRow('RSI 14',rsi,rCol);
   var bb=sig.bb;
+  var macdR=sig.macd;
+
+  // ── Trend ──
+  rows+=indSec('Trend');
+  var trend=sig.trend||'–';
+  rows+=renderIndRow('SMA Cross',trend,trend==='BULL'?'var(--g)':trend==='BEAR'?'var(--r)':'');
+  var ec=sig.emaCross||'–';
+  rows+=renderIndRow('EMA Cross',ec,ec==='BULL'?'var(--g)':ec==='BEAR'?'var(--r)':'');
+  rows+=renderIndRow('SMA '+String(sig.fastSma!=null?'Fast':'Fast'),sig.fastSma!=null?Number(sig.fastSma).toFixed(1):'–','');
+  rows+=renderIndRow('SMA Slow',sig.slowSma!=null?Number(sig.slowSma).toFixed(1):'–','');
+  rows+=renderIndRow('EMA 9',sig.ema9!=null?Number(sig.ema9).toFixed(1):'–','');
+  rows+=renderIndRow('EMA 21',sig.ema21!=null?Number(sig.ema21).toFixed(1):'–','');
+  rows+=renderIndRow('DEMA 21',sig.dema21!=null?Number(sig.dema21).toFixed(1):'–','');
+  rows+=renderIndRow('WMA 21',sig.wma21!=null?Number(sig.wma21).toFixed(1):'–','');
+  rows+=renderIndRow('Lin Reg 20',sig.lrc20!=null?Number(sig.lrc20).toFixed(1):'–','');
+
+  // ── Momentum ──
+  rows+=indSec('Momentum');
+  var rsi14=sig.rsi14;
+  rows+=renderIndRow('RSI 14',rsi14!=null?Number(rsi14).toFixed(1):'–',rsi14!=null?(rsi14>=60?'var(--g)':rsi14<=40?'var(--r)'):'');
+  var macdLine=macdR!=null?Number(macdR.macd).toFixed(2):'–';
+  var macdHist=macdR!=null?Number(macdR.histogram).toFixed(2):'–';
+  var macdHCol=macdR!=null?(macdR.histogram>0?'var(--g)':macdR.histogram<0?'var(--r)':''):'';
+  rows+=renderIndRow('MACD Line',macdLine,macdR!=null?(macdR.macd>0?'var(--g)':macdR.macd<0?'var(--r)':''):'');
+  rows+=renderIndRow('MACD Signal',macdR!=null?Number(macdR.signal).toFixed(2):'–','');
+  rows+=renderIndRow('MACD Hist',macdHist,macdHCol);
+  var mom=sig.mom10;
+  rows+=renderIndRow('Momentum',mom!=null?Number(mom).toFixed(2):'–',mom!=null?(mom>0?'var(--g)':mom<0?'var(--r)':''):'');
+  var tsiV=sig.tsi;
+  rows+=renderIndRow('TSI',tsiV!=null?Number(tsiV).toFixed(1):'–',tsiV!=null?(tsiV>0?'var(--g)':tsiV<0?'var(--r)':''):'');
+  rows+=renderIndRow('Fut Chg',sig.futChangePct!=null?Number(sig.futChangePct).toFixed(2)+'%':'–',sig.futChangePct!=null?(sig.futChangePct>0?'var(--g)':sig.futChangePct<0?'var(--r)'):'');
+
+  // ── Volatility ──
+  rows+=indSec('Volatility');
   var bbPct=bb!=null?Math.round(bb.pctB*100)+'%':'–';
-  var bbCol=bb!=null?(bb.pctB>0.8?'var(--r)':bb.pctB<0.2?'var(--g)':''):'';
-  rows+=renderIndRow('BB %B',bbPct,bbCol);
+  rows+=renderIndRow('BB %B',bbPct,bb!=null?(bb.pctB>0.8?'var(--r)':bb.pctB<0.2?'var(--g)':''):'');
+  rows+=renderIndRow('BB Upper',bb!=null?Number(bb.upper).toFixed(1):'–','');
+  rows+=renderIndRow('BB Mid',bb!=null?Number(bb.middle).toFixed(1):'–','');
+  rows+=renderIndRow('BB Lower',bb!=null?Number(bb.lower).toFixed(1):'–','');
   rows+=renderIndRow('BB BW',bb!=null?Number(bb.bandwidth).toFixed(4):'–','');
-  var atr=sig.atrPct!=null?(Number(sig.atrPct)*100).toFixed(3)+'%':'–';
-  rows+=renderIndRow('ATR %',atr,'');
-  var bm=sig.breadthWeightedMovePct!=null?Number(sig.breadthWeightedMovePct).toFixed(2)+'%':'–';
-  var bmCol=sig.breadthWeightedMovePct!=null?(sig.breadthWeightedMovePct>0?'var(--g)':sig.breadthWeightedMovePct<0?'var(--r)':''):'';
-  rows+=renderIndRow('Breadth',bm,bmCol);
-  rows+=renderIndRow('Adv/Dec',sig.advDec!=null?Number(sig.advDec).toFixed(2):'–','');
-  rows+=renderIndRow('Fut Chg',sig.futChangePct!=null?Number(sig.futChangePct).toFixed(2)+'%':'–','');
+  rows+=renderIndRow('ATR %',sig.atrPct!=null?(Number(sig.atrPct)*100).toFixed(3)+'%':'–','');
+  rows+=renderIndRow('Std Dev',sig.stdDev20!=null?Number(sig.stdDev20).toFixed(2):'–','');
+  rows+=renderIndRow('Hist Vol',sig.hv20!=null?Number(sig.hv20).toFixed(1)+'%':'–','');
+  rows+=renderIndRow('VIX',sig.vix!=null?Number(sig.vix).toFixed(2):'–',sig.vix!=null?(sig.vix>=20?'var(--r)':sig.vix<=14?'var(--g)':''):'');
+
+  // ── Volume ──
+  rows+=indSec('Volume');
+  rows+=renderIndRow('Volume',sig.volume!=null?Number(sig.volume).toLocaleString():'–','');
+  var pvtV=sig.pvt;
+  rows+=renderIndRow('PVT',pvtV!=null?Number(pvtV).toLocaleString():'–',pvtV!=null?(pvtV>0?'var(--g)':pvtV<0?'var(--r)':''):'');
+  rows+=renderIndRow('VWAP 20',sig.vwap20!=null?Number(sig.vwap20).toFixed(1):'–','');
+
+  // ── Breadth & Swing ──
+  rows+=indSec('Breadth & Swing');
+  var bm=sig.breadthWeightedMovePct;
+  rows+=renderIndRow('Breadth Move',bm!=null?Number(bm).toFixed(2)+'%':'–',bm!=null?(bm>0?'var(--g)':bm<0?'var(--r)':''):'');
+  rows+=renderIndRow('Adv / Dec',sig.advDec!=null?Number(sig.advDec).toFixed(2):'–','');
+  var asiV=sig.asi;
+  rows+=renderIndRow('ASI',asiV!=null?Number(asiV).toFixed(1):'–',asiV!=null?(asiV>0?'var(--g)':asiV<0?'var(--r)':''):'');
+
   el.innerHTML=rows;
 }
 
