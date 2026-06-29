@@ -272,24 +272,6 @@ tr:hover td{background:rgba(232,236,246,.025)}
     <div><div style="color:var(--m);font-size:10px;margin-bottom:2px">SU↑/↓</div><div class="mono" id="lcSu" style="font-size:13px;font-weight:700">–</div></div>
     <div><div style="color:var(--m);font-size:10px;margin-bottom:2px">Eff RR CE/PE</div><div class="mono" id="lcRr" style="font-size:12px;font-weight:700">–</div></div>
   </div>
-  <!-- Metrics row 2: Bollinger Bands %B per timeframe -->
-  <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px;font-size:11px;text-align:center">
-    <div style="background:var(--b1);border-radius:6px;padding:6px 4px">
-      <div style="color:var(--m);font-size:10px;margin-bottom:2px">BB %B · 1m</div>
-      <div class="mono" id="lcBb1" style="font-size:15px;font-weight:700">–</div>
-      <div id="lcBb1Bar" style="height:4px;border-radius:2px;margin-top:4px;background:var(--b2)"></div>
-    </div>
-    <div style="background:var(--b1);border-radius:6px;padding:6px 4px">
-      <div style="color:var(--m);font-size:10px;margin-bottom:2px">BB %B · 5m</div>
-      <div class="mono" id="lcBb5" style="font-size:15px;font-weight:700">–</div>
-      <div id="lcBb5Bar" style="height:4px;border-radius:2px;margin-top:4px;background:var(--b2)"></div>
-    </div>
-    <div style="background:var(--b1);border-radius:6px;padding:6px 4px">
-      <div style="color:var(--m);font-size:10px;margin-bottom:2px">BB %B · 15m</div>
-      <div class="mono" id="lcBb15" style="font-size:15px;font-weight:700">–</div>
-      <div id="lcBb15Bar" style="height:4px;border-radius:2px;margin-top:4px;background:var(--b2)"></div>
-    </div>
-  </div>
 
   <!-- History log -->
   <div class="ctog open" id="lcHistTog">
@@ -517,14 +499,29 @@ tr:hover td{background:rgba(232,236,246,.025)}
 </div>
 
 
-<!-- REASONING -->
+<!-- REASONING + INDICATORS -->
 <div class="card">
   <div class="ctog" id="rsnTog">
-    <div class="ct" style="margin:0">Signal Reasoning <span class="hint">why the engine made its recommendation</span></div>
+    <div class="ct" style="margin:0">Signal Reasoning &amp; Indicators <span class="hint">why the engine made its recommendation · all indicators per timeframe</span></div>
     <span class="chev">▼</span>
   </div>
   <div class="cbody cls" id="rsnBody" style="max-height:0">
-    <ul class="rlist" id="reasons" style="margin-top:10px"></ul>
+    <!-- Indicator grid: one column per TF -->
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:14px">
+      <div id="indPanel1m" style="background:var(--b1);border-radius:6px;padding:10px">
+        <div style="font-size:10px;font-weight:700;letter-spacing:.7px;text-transform:uppercase;color:var(--m);margin-bottom:8px">1m Indicators</div>
+        <div id="indRows1m"></div>
+      </div>
+      <div id="indPanel5m" style="background:var(--b1);border-radius:6px;padding:10px">
+        <div style="font-size:10px;font-weight:700;letter-spacing:.7px;text-transform:uppercase;color:var(--m);margin-bottom:8px">5m Indicators</div>
+        <div id="indRows5m"></div>
+      </div>
+      <div id="indPanel15m" style="background:var(--b1);border-radius:6px;padding:10px">
+        <div style="font-size:10px;font-weight:700;letter-spacing:.7px;text-transform:uppercase;color:var(--m);margin-bottom:8px">15m Indicators</div>
+        <div id="indRows15m"></div>
+      </div>
+    </div>
+    <ul class="rlist" id="reasons"></ul>
   </div>
 </div>
 
@@ -933,6 +930,39 @@ function setReasons(list){
   for(var i=0;i<(list||[]).length;i++){var li=document.createElement('li');li.className='ri';li.textContent=list[i];el.appendChild(li);}
 }
 
+function renderIndRow(label,val,cls){
+  return '<div style="display:flex;justify-content:space-between;align-items:center;padding:2px 0;border-bottom:1px solid rgba(255,255,255,.04)">'+
+    '<span style="font-size:11px;color:var(--m)">'+label+'</span>'+
+    '<span class="mono" style="font-size:12px;font-weight:700'+(cls?';color:'+cls:'')+'">'+val+'</span></div>';
+}
+
+function renderIndPanel(tfKey,sig){
+  var el=e('indRows'+tfKey);if(!el)return;
+  if(!sig){el.innerHTML='<div style="font-size:11px;color:var(--m)">warming up…</div>';return;}
+  var rows='';
+  var trend=sig.trend||'–';
+  var tCol=trend==='BULL'?'var(--g)':trend==='BEAR'?'var(--r)':'var(--m)';
+  rows+=renderIndRow('Trend',trend,tCol);
+  rows+=renderIndRow('Fast SMA',sig.fastSma!=null?Number(sig.fastSma).toFixed(1):'–','');
+  rows+=renderIndRow('Slow SMA',sig.slowSma!=null?Number(sig.slowSma).toFixed(1):'–','');
+  var rsi=sig.rsi14!=null?Number(sig.rsi14).toFixed(1):'–';
+  var rCol=sig.rsi14!=null?(sig.rsi14>=60?'var(--g)':sig.rsi14<=40?'var(--r)':''):'';
+  rows+=renderIndRow('RSI 14',rsi,rCol);
+  var bb=sig.bb;
+  var bbPct=bb!=null?Math.round(bb.pctB*100)+'%':'–';
+  var bbCol=bb!=null?(bb.pctB>0.8?'var(--r)':bb.pctB<0.2?'var(--g)':''):'';
+  rows+=renderIndRow('BB %B',bbPct,bbCol);
+  rows+=renderIndRow('BB BW',bb!=null?Number(bb.bandwidth).toFixed(4):'–','');
+  var atr=sig.atrPct!=null?(Number(sig.atrPct)*100).toFixed(3)+'%':'–';
+  rows+=renderIndRow('ATR %',atr,'');
+  var bm=sig.breadthWeightedMovePct!=null?Number(sig.breadthWeightedMovePct).toFixed(2)+'%':'–';
+  var bmCol=sig.breadthWeightedMovePct!=null?(sig.breadthWeightedMovePct>0?'var(--g)':sig.breadthWeightedMovePct<0?'var(--r)':''):'';
+  rows+=renderIndRow('Breadth',bm,bmCol);
+  rows+=renderIndRow('Adv/Dec',sig.advDec!=null?Number(sig.advDec).toFixed(2):'–','');
+  rows+=renderIndRow('Fut Chg',sig.futChangePct!=null?Number(sig.futChangePct).toFixed(2)+'%':'–','');
+  el.innerHTML=rows;
+}
+
 // ── Main applyUpdate ───────────────────────────────────────────────
 function applyUpdate(obj){
   if(!obj||paused)return;
@@ -1052,6 +1082,12 @@ function applyUpdate(obj){
   renderLifecycle(obj);
   var score=calcScore(obj);updateGauge(score);updateScoreFacts(obj,score);
 
+
+  // Indicators panel (per TF)
+  var tfsObj2=obj.timeframes||{};
+  renderIndPanel('1m',(tfsObj2['1m']&&tfsObj2['1m'].signals)||null);
+  renderIndPanel('5m',(tfsObj2['5m']&&tfsObj2['5m'].signals)||null);
+  renderIndPanel('15m',(tfsObj2['15m']&&tfsObj2['15m'].signals)||null);
 
   // Reasoning
   var headlines=(nw.headlines||[]).slice(0,4).map(function(h){return 'news: '+String(h&&h.title?h.title:'');});
@@ -1210,6 +1246,41 @@ async function loadReport(){
 document.getElementById('dateSelect').onchange=function(){if(this.value)document.getElementById('datePicker').value='';};
 document.getElementById('datePicker').onchange=function(){if(this.value)document.getElementById('dateSelect').value='';};
 loadDates();
+
+// Monthly / quarterly P&L
+async function loadPeriodStats(){
+  try{
+    const r=await fetch('/api/period-stats');
+    const {monthly,quarterly}=await r.json();
+    let html='';
+    if(quarterly&&quarterly.length){
+      html+='<div class="section" style="margin-top:24px"><div class="section-title">Quarterly P&amp;L</div><div style="overflow-x:auto"><table><thead><tr>'+
+        '<th>Quarter</th><th>Total</th><th>Target Hit</th><th>Stop Hit</th><th>Win Rate</th><th>Net P&amp;L (pts)</th></tr></thead><tbody>';
+      quarterly.forEach(q=>{
+        const wr=q.winRate!=null?Math.round(q.winRate*100)+'%':'–';
+        const pnlCls=q.netPnl>=0?'up':'dn';
+        html+='<tr><td class="mono">'+q.period+'</td><td>'+q.total+'</td><td class="up">'+q.targetHit+'</td><td class="dn">'+q.stopHit+'</td>'+
+          '<td class="mono '+(q.winRate!=null&&q.winRate>=0.5?'up':'dn')+'">'+wr+'</td>'+
+          '<td class="mono '+pnlCls+'">'+( q.netPnl>=0?'+':'')+Number(q.netPnl).toFixed(2)+' pts</td></tr>';
+      });
+      html+='</tbody></table></div></div>';
+    }
+    if(monthly&&monthly.length){
+      html+='<div class="section" style="margin-top:20px"><div class="section-title">Monthly P&amp;L</div><div style="overflow-x:auto"><table><thead><tr>'+
+        '<th>Month</th><th>Total</th><th>Target Hit</th><th>Stop Hit</th><th>Win Rate</th><th>Net P&amp;L (pts)</th></tr></thead><tbody>';
+      monthly.forEach(m=>{
+        const wr=m.winRate!=null?Math.round(m.winRate*100)+'%':'–';
+        const pnlCls=m.netPnl>=0?'up':'dn';
+        html+='<tr><td class="mono">'+m.period+'</td><td>'+m.total+'</td><td class="up">'+m.targetHit+'</td><td class="dn">'+m.stopHit+'</td>'+
+          '<td class="mono '+(m.winRate!=null&&m.winRate>=0.5?'up':'dn')+'">'+wr+'</td>'+
+          '<td class="mono '+pnlCls+'">'+( m.netPnl>=0?'+':'')+Number(m.netPnl).toFixed(2)+' pts</td></tr>';
+      });
+      html+='</tbody></table></div></div>';
+    }
+    if(html) document.getElementById('reportArea').insertAdjacentHTML('beforeend',html);
+  }catch(e){}
+}
+loadPeriodStats();
 </script>
 </body></html>`;
 }
@@ -1575,6 +1646,19 @@ ${ok ? '<p style="color:#aaa">Token saved. Engine restarting — go back to the 
       }
       return;
     }
+    if (url?.startsWith("/api/period-stats")) {
+      try {
+        const { fetchPeriodStats } = await import("../storage/predictionLog");
+        const { env: cfg } = await import("../config/env");
+        const stats = await fetchPeriodStats(cfg.PREDICTIONS_DIR);
+        res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+        res.end(JSON.stringify(stats));
+      } catch (e) {
+        res.writeHead(500, { "content-type": "application/json" }); res.end(JSON.stringify({ error: String(e) }));
+      }
+      return;
+    }
+
     if (url === "/events") {
       ensureChild();
       const id = nowId();

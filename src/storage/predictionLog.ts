@@ -153,6 +153,54 @@ export async function fetchAvailableDates(predictionsDir: string): Promise<strin
   }
 }
 
+export type PeriodStats = {
+  period: string;        // e.g. "2026-06" or "2026-Q2"
+  total: number;
+  targetHit: number;
+  stopHit: number;
+  winRate: number | null;
+  netPnl: number;
+};
+
+// Aggregate P&L by month (YYYY-MM) and quarter (YYYY-Q#) across all available dates.
+export async function fetchPeriodStats(predictionsDir: string): Promise<{ monthly: PeriodStats[]; quarterly: PeriodStats[] }> {
+  const dates = await fetchAvailableDates(predictionsDir);
+  const byMonth: Record<string, PredictionLogEntry[]> = {};
+  const byQuarter: Record<string, PredictionLogEntry[]> = {};
+
+  for (const date of dates) {
+    const entries = await fetchPredictionsByDate(date, predictionsDir);
+    const resolved = entries.filter((e) => e.outcome !== "PENDING");
+    if (!resolved.length) continue;
+
+    const month = date.slice(0, 7);
+    const q = Math.ceil(Number(date.slice(5, 7)) / 3);
+    const quarter = `${date.slice(0, 4)}-Q${q}`;
+
+    (byMonth[month] = byMonth[month] || []).push(...resolved);
+    (byQuarter[quarter] = byQuarter[quarter] || []).push(...resolved);
+  }
+
+  const toStats = (period: string, entries: PredictionLogEntry[]): PeriodStats => {
+    const hits = entries.filter((e) => e.outcome === "TARGET_HIT").length;
+    const stops = entries.filter((e) => e.outcome === "STOP_HIT").length;
+    const resolved = hits + stops;
+    return {
+      period,
+      total: entries.length,
+      targetHit: hits,
+      stopHit: stops,
+      winRate: resolved > 0 ? hits / resolved : null,
+      netPnl: entries.reduce((s, e) => s + (e.pnlPoints ?? 0), 0),
+    };
+  };
+
+  return {
+    monthly:   Object.entries(byMonth).sort((a,b)=>a[0].localeCompare(b[0])).map(([k,v])=>toStats(k,v)),
+    quarterly: Object.entries(byQuarter).sort((a,b)=>a[0].localeCompare(b[0])).map(([k,v])=>toStats(k,v)),
+  };
+}
+
 // Generate a Markdown report from the daily JSON log. Returns the path to the .md file.
 export async function generateDailyReport(date: string, predictionsDir: string): Promise<string> {
   const file = jsonPath(predictionsDir, date);

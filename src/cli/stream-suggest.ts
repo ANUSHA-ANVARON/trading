@@ -737,10 +737,26 @@ async function main() {
 
   const predictionLog: PredictionEntry[] = [];
   const MAX_PREDICTIONS = 200;
-  let lastPredLong = 0; // ms timestamp of last LONG prediction fired
-  let lastPredShort = 0; // ms timestamp of last SHORT prediction fired
-  let lastReportSession = ""; // tracks session state to detect CLOSED transition for report generation
-  const PRED_DEBOUNCE_MS = 10 * 60_000; // 10 min — don't re-fire same direction within this window
+  let lastPredLong = 0;
+  let lastPredShort = 0;
+  let lastReportSession = "";
+  const PRED_DEBOUNCE_MS = 10 * 60_000;
+
+  // Restore today's predictions from persistent storage so a server restart
+  // doesn't wipe the in-memory log visible in the UI.
+  {
+    const todayIst = toIstDate(new Date().toISOString());
+    const { fetchPredictionsByDate } = await import("../storage/predictionLog");
+    const saved = await fetchPredictionsByDate(todayIst, env.PREDICTIONS_DIR).catch(() => []);
+    for (const e2 of saved.slice(0, MAX_PREDICTIONS).reverse()) {
+      predictionLog.unshift(e2 as unknown as PredictionEntry);
+    }
+    if (saved.length) {
+      const last = saved[saved.length - 1] as any;
+      if (last.direction === "LONG") lastPredLong = new Date(last.asof).getTime();
+      else lastPredShort = new Date(last.asof).getTime();
+    }
+  }
 
   let spreadLegs:
     | null
