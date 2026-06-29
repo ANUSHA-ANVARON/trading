@@ -683,7 +683,13 @@ function renderLifecycle(obj){
   var tb=e('lcHistTbody'),hn=e('lcHistNote');
   if(tb){
     tb.innerHTML='';
-    var rows=hist.slice().reverse().slice(0,40);
+    var rows=hist.slice().reverse().filter(function(h){
+      if(!h.asof)return false;
+      var d=new Date(new Date(h.asof).getTime()+5.5*3600000);
+      var day=d.getUTCDay();if(day===0||day===6)return false;
+      var mins=d.getUTCHours()*60+d.getUTCMinutes();
+      return mins>=9*60+15&&mins<=15*60+30;
+    }).slice(0,40);
     if(rows.length){
       if(hn)hn.textContent='';
       for(var i=0;i<rows.length;i++){
