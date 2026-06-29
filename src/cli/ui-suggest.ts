@@ -442,7 +442,13 @@ tr:hover td{background:rgba(232,236,246,.025)}
     <!-- Summary stats bar -->
     <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin:8px 0 12px">
       <div id="predStats" style="display:flex;gap:12px;flex-wrap:wrap;align-items:center"></div>
-      <button class="btn btn-g" id="btnExportPred" style="margin-left:auto">⬇ Export CSV</button>
+      <div style="margin-left:auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <span style="font-size:11px;color:var(--m)">From</span>
+        <input type="date" id="expFrom" style="background:var(--b2);border:1px solid var(--b1);color:var(--fg);padding:3px 7px;border-radius:5px;font-size:11px;outline:none">
+        <span style="font-size:11px;color:var(--m)">To</span>
+        <input type="date" id="expTo" style="background:var(--b2);border:1px solid var(--b1);color:var(--fg);padding:3px 7px;border-radius:5px;font-size:11px;outline:none">
+        <button class="btn btn-g" id="btnExportPred">⬇ Export CSV</button>
+      </div>
     </div>
     <!-- Table -->
     <div style="overflow:auto;max-height:400px">
@@ -904,24 +910,68 @@ e('btnExport')&&e('btnExport').addEventListener('click',function(){
   var a=document.createElement('a');a.href=url;a.download='signal_history_'+new Date().toISOString().slice(0,10)+'.csv';a.click();URL.revokeObjectURL(url);
 });
 
-e('btnExportPred')&&e('btnExportPred').addEventListener('click',function(){
-  if(!lastPredLog.length){alert('No predictions logged yet.');return;}
-  var h=['Time (IST)','Timeframe','Direction','Entry','Target','Stop','Confidence %','RSI 5m','RSI 15m','BB %B 5m','TF Agreement','Lifecycle','Session','Status','Outcome Price','P&L pts'];
+e('btnExportPred')&&e('btnExportPred').addEventListener('click',async function(){
+  var fromVal=(e('expFrom')||{}).value||'';
+  var toVal=(e('expTo')||{}).value||'';
+  var rows=[];
+
+  if(fromVal||toVal){
+    // Date-range export: fetch from API for each date in range
+    var from=fromVal?new Date(fromVal):null;
+    var to=toVal?new Date(toVal):null;
+    try{
+      var datesR=await fetch('/api/report-dates');
+      var allDates=await datesR.json();
+      var filtered=allDates.filter(function(d){
+        var dt=new Date(d);
+        return (!from||dt>=from)&&(!to||dt<=to);
+      });
+      for(var di=0;di<filtered.length;di++){
+        var dr=await fetch('/api/predictions?date='+encodeURIComponent(filtered[di]));
+        var dayRows=await dr.json();
+        if(Array.isArray(dayRows))rows=rows.concat(dayRows);
+      }
+    }catch(ex){alert('Error fetching date range: '+ex);return;}
+  } else {
+    rows=lastPredLog.slice();
+  }
+
+  if(!rows.length){alert('No predictions found for selected range.');return;}
+
+  var h=['Date (IST)','Time (IST)','Timeframe','Direction','Entry','Target','Stop','Confidence %',
+    'RSI 1m','RSI 5m','RSI 15m','BB%B 5m','BB%B 15m','TF Agreement','Spartan Net','Surf Net','Breadth Move',
+    'Lifecycle','Session','Outcome','Outcome Price','P&L pts','Resolved At'];
   var lines=[h.join(',')];
-  for(var i=0;i<lastPredLog.length;i++){
-    var r=lastPredLog[i],sg=r.signals||{};
+  for(var i=0;i<rows.length;i++){
+    var r=rows[i],sg=r.signals||{};
+    var dt=r.asof?new Date(new Date(r.asof).getTime()+5.5*3600000):null;
+    var dateStr=dt?dt.toISOString().slice(0,10):'';
+    var timeStr=dt?dt.toISOString().slice(11,16)+' IST':'';
     lines.push([
-      toIST(r.asof), r.timeframe, r.direction, r.entryPrice, r.targetPrice, r.stopPrice,
+      dateStr, timeStr, r.timeframe, r.direction,
+      r.entryPrice!=null?r.entryPrice:'', r.targetPrice!=null?r.targetPrice:'', r.stopPrice!=null?r.stopPrice:'',
       r.confidence!=null?Math.round(r.confidence*100):'',
-      sg.rsi5m!=null?sg.rsi5m.toFixed(1):'', sg.rsi15m!=null?sg.rsi15m.toFixed(1):'',
-      sg.bbPctB5m!=null?Math.round(sg.bbPctB5m*100):'', sg.tfAgree!=null?sg.tfAgree:'',
-      String(r.lifecycle||'').replace(/,/g,' '), String(r.session||'').replace(/,/g,' '),
-      r.outcome||'PENDING', r.outcomePrice!=null?r.outcomePrice:'', r.pnlPoints!=null?r.pnlPoints:''
+      sg.rsi1m!=null?Number(sg.rsi1m).toFixed(1):'',
+      sg.rsi5m!=null?Number(sg.rsi5m).toFixed(1):'',
+      sg.rsi15m!=null?Number(sg.rsi15m).toFixed(1):'',
+      sg.bbPctB5m!=null?Math.round(sg.bbPctB5m*100):'',
+      sg.bbPctB15m!=null?Math.round(sg.bbPctB15m*100):'',
+      sg.tfAgree!=null?sg.tfAgree:'',
+      sg.spartanNet!=null?sg.spartanNet:'',
+      sg.surfNet!=null?sg.surfNet:'',
+      sg.breadthMove!=null?Number(sg.breadthMove).toFixed(3):'',
+      String(r.lifecycle||'').replace(/,/g,' '),
+      String(r.session||'').replace(/,/g,' '),
+      r.outcome||'PENDING',
+      r.outcomePrice!=null?r.outcomePrice:'',
+      r.pnlPoints!=null?r.pnlPoints:'',
+      r.outcomeAt?(function(iso){var d=new Date(new Date(iso).getTime()+5.5*3600000);return d.toISOString().slice(0,16).replace('T',' ')+' IST';})(r.outcomeAt):''
     ].join(','));
   }
+  var suffix=fromVal&&toVal?fromVal+'_to_'+toVal:new Date().toISOString().slice(0,10);
   var blob=new Blob([lines.join('\\n')],{type:'text/csv'});
   var url=URL.createObjectURL(blob);
-  var a=document.createElement('a');a.href=url;a.download='prediction_log_'+new Date().toISOString().slice(0,10)+'.csv';a.click();URL.revokeObjectURL(url);
+  var a=document.createElement('a');a.href=url;a.download='predictions_'+suffix+'.csv';a.click();URL.revokeObjectURL(url);
 });
 
 // ── Reasoning ─────────────────────────────────────────────────────
@@ -1323,9 +1373,10 @@ async function main() {
   let buffer = "";
   let lastEngineError: string | null = null;
   let lastEngineExit: { code: number | null; signal: NodeJS.Signals | null; at: string } | null = null;
+  let lastSnapshot: string | null = null; // cached last broadcast — replayed to new SSE clients immediately
   const clients = new Map<string, Client>();
 
-  function broadcast(line: string) { for (const c of clients.values()) c.res.write(`data: ${line}\n\n`); }
+  function broadcast(line: string) { lastSnapshot = line; for (const c of clients.values()) c.res.write(`data: ${line}\n\n`); }
 
   function ensureChild() {
     if (childRunning) return;
@@ -1668,6 +1719,7 @@ ${ok ? '<p style="color:#aaa">Token saved. Engine restarting — go back to the 
         "x-accel-buffering": "no",
       });
       res.write(`: connected ${id}\n\n`);
+      if (lastSnapshot) res.write(`data: ${lastSnapshot}\n\n`);
       clients.set(id, { id, res });
 
       // Keepalive ping every 25 s — prevents Railway/nginx from closing idle SSE connections.
