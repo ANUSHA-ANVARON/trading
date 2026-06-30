@@ -1020,7 +1020,7 @@ function renderIndPanel(tfKey,sig){
   // ── Momentum ──
   rows+=indSec('Momentum');
   var rsi14=sig.rsi14;
-  rows+=renderIndRow('RSI 14',rsi14!=null?Number(rsi14).toFixed(1):'–',rsi14!=null?(rsi14>=60?'var(--g)':rsi14<=40?'var(--r)'):'');
+  rows+=renderIndRow('RSI 14',rsi14!=null?Number(rsi14).toFixed(1):'–',rsi14!=null?(rsi14>=60?'var(--g)':rsi14<=40?'var(--r)':''):'');
   var macdLine=macdR!=null?Number(macdR.macd).toFixed(2):'–';
   var macdHist=macdR!=null?Number(macdR.histogram).toFixed(2):'–';
   var macdHCol=macdR!=null?(macdR.histogram>0?'var(--g)':macdR.histogram<0?'var(--r)':''):'';
@@ -1031,7 +1031,7 @@ function renderIndPanel(tfKey,sig){
   rows+=renderIndRow('Momentum',mom!=null?Number(mom).toFixed(2):'–',mom!=null?(mom>0?'var(--g)':mom<0?'var(--r)':''):'');
   var tsiV=sig.tsi;
   rows+=renderIndRow('TSI',tsiV!=null?Number(tsiV).toFixed(1):'–',tsiV!=null?(tsiV>0?'var(--g)':tsiV<0?'var(--r)':''):'');
-  rows+=renderIndRow('Fut Chg',sig.futChangePct!=null?Number(sig.futChangePct).toFixed(2)+'%':'–',sig.futChangePct!=null?(sig.futChangePct>0?'var(--g)':sig.futChangePct<0?'var(--r)'):'');
+  rows+=renderIndRow('Fut Chg',sig.futChangePct!=null?Number(sig.futChangePct).toFixed(2)+'%':'–',sig.futChangePct!=null?(sig.futChangePct>0?'var(--g)':sig.futChangePct<0?'var(--r)':''):'');
 
   // ── Volatility ──
   rows+=indSec('Volatility');
