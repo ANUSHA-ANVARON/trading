@@ -7,6 +7,7 @@
   "scripts": {
     "login:url": "tsx src/cli/login-url.ts",
     "session:generate": "tsx src/cli/generate-session.ts",
+    "session:auto": "tsx src/cli/auto-session.ts",
     "instruments:sync:nfo": "tsx src/cli/sync-nfo-instruments.ts",
     "instruments:sync:nse": "tsx src/cli/sync-nse-instruments.ts",
     "fo:search": "tsx src/cli/fo-search.ts",

@@ -1801,6 +1801,22 @@ ${ok ? '<p style="color:#aaa">Token saved. Engine restarting — go back to the 
     } catch { return false; }
   }
 
+  function hasAutoLoginCreds(): boolean {
+    return !!(process.env.KITE_USER_ID?.trim() && process.env.KITE_PASSWORD?.trim() && process.env.KITE_TOTP_SECRET?.trim());
+  }
+
+  async function tryAutoSession(): Promise<boolean> {
+    if (!hasAutoLoginCreds()) return false;
+    try {
+      const { runAutoSession } = await import("./auto-session");
+      await runAutoSession();
+      return true;
+    } catch (err) {
+      console.error(JSON.stringify({ event: "auto_session_failed", error: String((err as Error).message) }));
+      return false;
+    }
+  }
+
   setInterval(async () => {
     if (childRunning) return;
     const now = new Date();
@@ -1810,11 +1826,14 @@ ${ok ? '<p style="color:#aaa">Token saved. Engine restarting — go back to the 
     const h = ist.getUTCHours(), m = ist.getUTCMinutes();
     const mins = h * 60 + m;
     if (mins < 9 * 60 + 14 || mins > 15 * 60 + 32) return; // outside 09:14–15:32 IST
-    if (await hasValidKiteToken()) {
-      // eslint-disable-next-line no-console
-      console.error(JSON.stringify({ event: "auto_start", ist: `${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")} IST` }));
-      ensureChild();
+    if (!(await hasValidKiteToken())) {
+      // Try auto-login before giving up for this tick
+      const ok = await tryAutoSession();
+      if (!ok) return;
     }
+    // eslint-disable-next-line no-console
+    console.error(JSON.stringify({ event: "auto_start", ist: `${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")} IST` }));
+    ensureChild();
   }, 60_000);
 
   function startOnPort(port: number) {
