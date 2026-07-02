@@ -6,6 +6,7 @@ import { equalWeightsForNifty50 } from "../analysis/weightsFallback";
 import { pickNearExpiryNiftyFutureKey } from "../analysis/defaults";
 import { pickNearestWeeklyNiftyOptionExpiry } from "../analysis/defaults";
 import { sma, ema, dema, wma, rsi, macd, momentum, tsi, atr, bollingerBands, stdDev, historicalVolatility, linearRegressionCurve, pvt, vwap, asi } from "../analysis/indicators";
+import { OBITracker } from "../analysis/orderFlow";
 import { CandleAggregator } from "../live/candleAggregator";
 import { getInstruments } from "../instruments/instrumentsCache";
 import { createKiteTicker } from "../kite/ticker";
@@ -826,6 +827,7 @@ async function main() {
   const agg1m = new CandleAggregator({ timeframeSec: 60, maxCandles: 600 });
   const agg5m = new CandleAggregator({ timeframeSec: 300, maxCandles: 600 });
   const agg15m = new CandleAggregator({ timeframeSec: 900, maxCandles: 600 });
+  const obiTracker = new OBITracker({ smoothWindow: 10, depthLevels: 3 });
 
   // Seed candles from Kite historical so indicators (SMA/RSI/ATR) are ready immediately.
   // Without this, 5m/15m can take a long time to become usable.
@@ -1023,6 +1025,7 @@ async function main() {
           agg1m.onTick(px, ts, vol);
           agg5m.onTick(px, ts, vol);
           agg15m.onTick(px, ts, vol);
+          obiTracker.onTick(t);
         }
       }
     }
@@ -1062,6 +1065,7 @@ async function main() {
     predictionLog: PredictionEntry[];
     rms: { maxDailyLoss: number | null; maxRiskPerTrade: number | null };
     options: any;
+    orderFlow: any;
     news: any;
     notes: string[];
   } {
@@ -1995,6 +1999,7 @@ async function main() {
       predictionLog: [...predictionLog],
       rms: { maxDailyLoss: maxDailyLossVal, maxRiskPerTrade: maxRiskPerTradeVal },
       options: optionsSuggestion,
+      orderFlow: obiTracker.snapshot(),
       news: news
         ? {
             level: effectiveNewsRisk,
@@ -2237,8 +2242,13 @@ async function main() {
       }
     }
 
-    // Generate daily Markdown report when session transitions to CLOSED.
+    // Reset order-flow tracker at start of each new day (PRE_OPEN transition).
     const currentSession = String(snap.lifecycle?.session ?? "");
+    if (currentSession === "PRE_OPEN" && lastReportSession === "CLOSED") {
+      obiTracker.resetDay();
+    }
+
+    // Generate daily Markdown report when session transitions to CLOSED.
     if (currentSession === "CLOSED" && lastReportSession !== "CLOSED") {
       const today = toIstDate(new Date().toISOString());
       generateDailyReport(today, env.PREDICTIONS_DIR).then((file) => {

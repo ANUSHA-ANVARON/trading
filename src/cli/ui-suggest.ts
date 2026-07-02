@@ -512,6 +512,11 @@ tr:hover td{background:rgba(232,236,246,.025)}
     <span class="chev">▼</span>
   </div>
   <div class="cbody cls" id="rsnBody" style="max-height:0">
+    <!-- Order Flow panel (full width, above TF grid) -->
+    <div style="background:var(--b1);border-radius:6px;padding:10px;margin-bottom:10px">
+      <div style="font-size:10px;font-weight:700;letter-spacing:.7px;text-transform:uppercase;color:var(--m);margin-bottom:4px">Order Flow · NIFTY FUT</div>
+      <div id="ofPanel" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:0"></div>
+    </div>
     <!-- Indicator grid: one column per TF -->
     <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:14px">
       <div id="indPanel1m" style="background:var(--b1);border-radius:6px;padding:10px;max-height:520px;overflow-y:auto">
@@ -1064,6 +1069,28 @@ function renderIndPanel(tfKey,sig){
   el.innerHTML=rows;
 }
 
+function renderOrderFlowPanel(of){
+  var el=e('ofPanel');if(!el)return;
+  if(!of){el.innerHTML='<div style="font-size:11px;color:var(--m)">warming up…</div>';return;}
+  var rows='';
+  var sig=of.obiSignal;
+  var sigCol=sig==='BUY'?'var(--g)':sig==='SELL'?'var(--r)':'';
+  rows+='<div style="display:flex;align-items:center;gap:8px;padding:6px 0 4px">'
+    +'<span style="font-size:13px;font-weight:700;color:'+sigCol+'">'+(sig||'–')+'</span>'
+    +'<span style="font-size:10px;color:var(--m)">OBI Signal</span>'
+    +(of.absorption?'<span style="font-size:10px;background:#f59e0b22;color:#f59e0b;padding:1px 5px;border-radius:3px">ABSORPTION</span>':'')
+    +'</div>';
+  rows+=renderIndRow('OBI (smoothed)',of.obiSmoothed!=null?of.obiSmoothed.toFixed(4):'–',sigCol);
+  rows+=renderIndRow('OBI (raw)',of.obiRaw!=null?of.obiRaw.toFixed(4):'–','');
+  rows+=renderIndRow('Bid Qty (top 3)',of.bidQtyTop3!=null?Number(of.bidQtyTop3).toLocaleString():'–','var(--g)');
+  rows+=renderIndRow('Ask Qty (top 3)',of.askQtyTop3!=null?Number(of.askQtyTop3).toLocaleString():'–','var(--r)');
+  var cd=of.cumulativeDelta;
+  rows+=renderIndRow('Cum. Delta',cd!=null?Number(cd).toLocaleString():'–',cd!=null?(cd>0?'var(--g)':cd<0?'var(--r)':''):'');
+  var dp=of.deltaPerTick;
+  rows+=renderIndRow('Delta / Tick',dp!=null?Number(dp).toLocaleString():'–',dp!=null?(dp>0?'var(--g)':dp<0?'var(--r)':''):'');
+  el.innerHTML=rows;
+}
+
 // ── Main applyUpdate ───────────────────────────────────────────────
 function applyUpdate(obj){
   if(!obj||paused)return;
@@ -1189,6 +1216,7 @@ function applyUpdate(obj){
   renderIndPanel('1m',(tfsObj2['1m']&&tfsObj2['1m'].signals)||null);
   renderIndPanel('5m',(tfsObj2['5m']&&tfsObj2['5m'].signals)||null);
   renderIndPanel('15m',(tfsObj2['15m']&&tfsObj2['15m'].signals)||null);
+  renderOrderFlowPanel(obj.orderFlow||null);
 
   // Reasoning
   var headlines=(nw.headlines||[]).slice(0,4).map(function(h){return 'news: '+String(h&&h.title?h.title:'');});
