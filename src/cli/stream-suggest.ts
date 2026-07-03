@@ -5,7 +5,7 @@ import { analyzeBreadthFromTicks } from "../analysis/breadthFromTicks";
 import { equalWeightsForNifty50 } from "../analysis/weightsFallback";
 import { pickNearExpiryNiftyFutureKey } from "../analysis/defaults";
 import { pickNearestWeeklyNiftyOptionExpiry } from "../analysis/defaults";
-import { sma, ema, dema, wma, rsi, macd, momentum, tsi, atr, bollingerBands, stdDev, historicalVolatility, linearRegressionCurve, pvt, vwap, asi } from "../analysis/indicators";
+import { sma, ema, dema, wma, rsi, macd, momentum, tsi, atr, bollingerBands, stdDev, historicalVolatility, linearRegressionCurve, pvt, vwap, asi, relativeVolume, volumeOscillator, candlePattern, trendStructure, supportLevel, resistanceLevel } from "../analysis/indicators";
 import { OBITracker } from "../analysis/orderFlow";
 import { CandleAggregator } from "../live/candleAggregator";
 import { getInstruments } from "../instruments/instrumentsCache";
@@ -578,6 +578,14 @@ function scoreSuggestion(input: {
   const vwapVal= vwap(n, 20);
   const asiVal = asi(n);
   const lastVol = n.length ? (n[n.length - 1].volume ?? null) : null;
+  // Volume
+  const relVol  = relativeVolume(n, 20);
+  const volOsc  = volumeOscillator(n, 5, 20);
+  // Price action
+  const pattern = candlePattern(n);
+  const trendStr = trendStructure(n, 5);
+  const support  = supportLevel(n, 20);
+  const resist   = resistanceLevel(n, 20);
 
   return {
     timeframe: input.tfLabel,
@@ -613,6 +621,14 @@ function scoreSuggestion(input: {
       asi:    asiVal  ?? null,
       volume: lastVol,
       vix:    input.vix ?? null,
+      // Volume
+      relVol:  relVol ?? null,
+      volOsc:  volOsc ?? null,
+      // Price action
+      pattern,
+      trendStructure: trendStr,
+      support:  support ?? null,
+      resist:   resist  ?? null,
     },
     reasoning: reasons,
   };

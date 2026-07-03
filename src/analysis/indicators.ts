@@ -224,3 +224,123 @@ export function asi(candles: Candle[]): number | null {
   for (let i = 1; i < candles.length; i++) result += swingIndex(candles[i - 1], candles[i]);
   return +result.toFixed(2);
 }
+
+// ── Volume ─────────────────────────────────────────────────────────────────
+
+/** Relative volume: current bar's volume as a multiple of the N-bar average */
+export function relativeVolume(candles: Candle[], period = 20): number | null {
+  if (candles.length < period + 1) return null;
+  const last = candles[candles.length - 1];
+  const avg = candles.slice(candles.length - period - 1, candles.length - 1)
+    .reduce((s, c) => s + (c.volume ?? 0), 0) / period;
+  if (avg === 0) return null;
+  return +((last.volume ?? 0) / avg).toFixed(2);
+}
+
+/** Volume oscillator: (fast vol SMA − slow vol SMA) / slow vol SMA × 100 */
+export function volumeOscillator(candles: Candle[], fast = 5, slow = 20): number | null {
+  if (candles.length < slow) return null;
+  const vols = candles.map(c => c.volume ?? 0);
+  const fastAvg = vols.slice(-fast).reduce((a, b) => a + b, 0) / fast;
+  const slowAvg = vols.slice(-slow).reduce((a, b) => a + b, 0) / slow;
+  if (slowAvg === 0) return null;
+  return +((fastAvg - slowAvg) / slowAvg * 100).toFixed(2);
+}
+
+// ── Price Action ───────────────────────────────────────────────────────────
+
+export type CandlePattern =
+  | "DOJI" | "HAMMER" | "SHOOTING_STAR" | "BULLISH_ENGULF" | "BEARISH_ENGULF"
+  | "BULLISH_MARUBOZU" | "BEARISH_MARUBOZU" | "SPINNING_TOP" | "NONE";
+
+/** Detect the most significant pattern in the last 1–2 candles */
+export function candlePattern(candles: Candle[]): CandlePattern {
+  if (candles.length < 2) return "NONE";
+  const c  = candles[candles.length - 1];
+  const p  = candles[candles.length - 2];
+  const body = Math.abs(c.close - c.open);
+  const range = c.high - c.low;
+  if (range === 0) return "NONE";
+  const bodyRatio  = body / range;
+  const upperWick  = c.high - Math.max(c.close, c.open);
+  const lowerWick  = Math.min(c.close, c.open) - c.low;
+
+  // Doji: body < 10% of range
+  if (bodyRatio < 0.1) return "DOJI";
+
+  // Marubozu: body > 90% of range (almost no wicks)
+  if (bodyRatio > 0.9) return c.close > c.open ? "BULLISH_MARUBOZU" : "BEARISH_MARUBOZU";
+
+  // Hammer: small body in upper third, long lower wick (>2× body), tiny upper wick
+  if (lowerWick > body * 2 && upperWick < body * 0.5 && (c.high - Math.max(c.close, c.open)) < body) return "HAMMER";
+
+  // Shooting star: small body in lower third, long upper wick
+  if (upperWick > body * 2 && lowerWick < body * 0.5) return "SHOOTING_STAR";
+
+  // Engulfing: current body fully contains previous body
+  const pBody = Math.abs(p.close - p.open);
+  if (pBody > 0 && body > pBody) {
+    const bullEngulf = c.close > c.open && p.close < p.open &&
+                       c.open <= p.close && c.close >= p.open;
+    const bearEngulf = c.close < c.open && p.close > p.open &&
+                       c.open >= p.close && c.close <= p.open;
+    if (bullEngulf) return "BULLISH_ENGULF";
+    if (bearEngulf) return "BEARISH_ENGULF";
+  }
+
+  if (bodyRatio < 0.4) return "SPINNING_TOP";
+  return "NONE";
+}
+
+export type TrendStructure = "UPTREND" | "DOWNTREND" | "RANGING" | "NA";
+
+/**
+ * Higher High / Higher Low = UPTREND; Lower Low / Lower High = DOWNTREND.
+ * Looks at last `swings` swing points derived from local extremes.
+ */
+export function trendStructure(candles: Candle[], lookback = 5): TrendStructure {
+  if (candles.length < lookback * 2 + 1) return "NA";
+  const recent = candles.slice(-lookback * 3);
+
+  const highs: number[] = [];
+  const lows: number[]  = [];
+  for (let i = 1; i < recent.length - 1; i++) {
+    if (recent[i].high >= recent[i - 1].high && recent[i].high >= recent[i + 1].high)
+      highs.push(recent[i].high);
+    if (recent[i].low <= recent[i - 1].low && recent[i].low <= recent[i + 1].low)
+      lows.push(recent[i].low);
+  }
+
+  if (highs.length < 2 || lows.length < 2) return "RANGING";
+
+  const hhCheck = highs[highs.length - 1] > highs[highs.length - 2];
+  const hlCheck = lows[lows.length - 1]   > lows[lows.length - 2];
+  const llCheck = lows[lows.length - 1]   < lows[lows.length - 2];
+  const lhCheck = highs[highs.length - 1] < highs[highs.length - 2];
+
+  if (hhCheck && hlCheck) return "UPTREND";
+  if (llCheck && lhCheck) return "DOWNTREND";
+  return "RANGING";
+}
+
+/** Key support level: highest local low in last `period` candles */
+export function supportLevel(candles: Candle[], period = 20): number | null {
+  if (candles.length < period) return null;
+  const slice = candles.slice(-period);
+  const lows = slice.map(c => c.low);
+  return +Math.max(...lows.slice(0, -1).filter((_, i) =>
+    lows[i] <= lows[Math.max(0, i - 1)] && lows[i] <= lows[i + 1]
+  )).toFixed(2) || null;
+}
+
+/** Key resistance level: lowest local high in last `period` candles */
+export function resistanceLevel(candles: Candle[], period = 20): number | null {
+  if (candles.length < period) return null;
+  const slice = candles.slice(-period);
+  const highs = slice.map(c => c.high);
+  const pivotHighs = highs.slice(0, -1).filter((_, i) =>
+    highs[i] >= highs[Math.max(0, i - 1)] && highs[i] >= highs[i + 1]
+  );
+  if (!pivotHighs.length) return null;
+  return +Math.min(...pivotHighs).toFixed(2);
+}

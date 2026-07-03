@@ -514,8 +514,8 @@ tr:hover td{background:rgba(232,236,246,.025)}
   <div class="cbody cls" id="rsnBody" style="max-height:0">
     <!-- Order Flow panel (full width, above TF grid) -->
     <div style="background:var(--b1);border-radius:6px;padding:10px;margin-bottom:10px">
-      <div style="font-size:10px;font-weight:700;letter-spacing:.7px;text-transform:uppercase;color:var(--m);margin-bottom:4px">Order Flow · NIFTY FUT</div>
-      <div id="ofPanel" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:0"></div>
+      <div style="font-size:10px;font-weight:700;letter-spacing:.7px;text-transform:uppercase;color:var(--m);margin-bottom:8px">Order Flow · NIFTY FUT</div>
+      <div id="ofPanel"></div>
     </div>
     <!-- Indicator grid: one column per TF -->
     <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:14px">
@@ -1054,9 +1054,24 @@ function renderIndPanel(tfKey,sig){
   // ── Volume ──
   rows+=indSec('Volume');
   rows+=renderIndRow('Volume',sig.volume!=null?Number(sig.volume).toLocaleString():'–','');
+  var rvol=sig.relVol;
+  rows+=renderIndRow('Rel Volume',rvol!=null?rvol.toFixed(2)+'×':'–',rvol!=null?(rvol>=2?'var(--g)':rvol<=0.5?'var(--r)':''):'');
+  var vosc=sig.volOsc;
+  rows+=renderIndRow('Vol Osc',vosc!=null?(vosc>=0?'+':'')+vosc.toFixed(1)+'%':'–',vosc!=null?(vosc>0?'var(--g)':vosc<0?'var(--r)':''):'');
   var pvtV=sig.pvt;
   rows+=renderIndRow('PVT',pvtV!=null?Number(pvtV).toLocaleString():'–',pvtV!=null?(pvtV>0?'var(--g)':pvtV<0?'var(--r)':''):'');
   rows+=renderIndRow('VWAP 20',sig.vwap20!=null?Number(sig.vwap20).toFixed(1):'–','');
+
+  // ── Price Action ──
+  rows+=indSec('Price Action');
+  var pat=sig.pattern||'NONE';
+  var patCol=pat==='BULLISH_ENGULF'||pat==='HAMMER'||pat==='BULLISH_MARUBOZU'?'var(--g)':pat==='BEARISH_ENGULF'||pat==='SHOOTING_STAR'||pat==='BEARISH_MARUBOZU'?'var(--r)':'';
+  rows+=renderIndRow('Candle Pattern',pat.replace(/_/g,' '),patCol);
+  var ts=sig.trendStructure||'NA';
+  var tsCol=ts==='UPTREND'?'var(--g)':ts==='DOWNTREND'?'var(--r)':'';
+  rows+=renderIndRow('Trend Structure',ts,tsCol);
+  rows+=renderIndRow('Support',sig.support!=null?Number(sig.support).toFixed(1):'–','var(--g)');
+  rows+=renderIndRow('Resistance',sig.resist!=null?Number(sig.resist).toFixed(1):'–','var(--r)');
 
   // ── Breadth & Swing ──
   rows+=indSec('Breadth & Swing');
@@ -1069,26 +1084,41 @@ function renderIndPanel(tfKey,sig){
   el.innerHTML=rows;
 }
 
+function ofStat(label,val,col){
+  return '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;background:rgba(255,255,255,.04);border-radius:5px;padding:6px 10px;min-width:90px">'
+    +'<span class="mono" style="font-size:14px;font-weight:700;color:'+(col||'var(--fg)')+'">'+val+'</span>'
+    +'<span style="font-size:9px;color:var(--m);margin-top:2px;text-align:center">'+label+'</span>'
+    +'</div>';
+}
 function renderOrderFlowPanel(of){
   var el=e('ofPanel');if(!el)return;
   if(!of){el.innerHTML='<div style="font-size:11px;color:var(--m)">warming up…</div>';return;}
-  var rows='';
   var sig=of.obiSignal;
-  var sigCol=sig==='BUY'?'var(--g)':sig==='SELL'?'var(--r)':'';
-  rows+='<div style="display:flex;align-items:center;gap:8px;padding:6px 0 4px">'
-    +'<span style="font-size:13px;font-weight:700;color:'+sigCol+'">'+(sig||'–')+'</span>'
-    +'<span style="font-size:10px;color:var(--m)">OBI Signal</span>'
-    +(of.absorption?'<span style="font-size:10px;background:#f59e0b22;color:#f59e0b;padding:1px 5px;border-radius:3px">ABSORPTION</span>':'')
-    +'</div>';
-  rows+=renderIndRow('OBI (smoothed)',of.obiSmoothed!=null?of.obiSmoothed.toFixed(4):'–',sigCol);
-  rows+=renderIndRow('OBI (raw)',of.obiRaw!=null?of.obiRaw.toFixed(4):'–','');
-  rows+=renderIndRow('Bid Qty (top 3)',of.bidQtyTop3!=null?Number(of.bidQtyTop3).toLocaleString():'–','var(--g)');
-  rows+=renderIndRow('Ask Qty (top 3)',of.askQtyTop3!=null?Number(of.askQtyTop3).toLocaleString():'–','var(--r)');
+  var sigCol=sig==='BUY'?'var(--g)':sig==='SELL'?'var(--r)':'var(--m)';
   var cd=of.cumulativeDelta;
-  rows+=renderIndRow('Cum. Delta',cd!=null?Number(cd).toLocaleString():'–',cd!=null?(cd>0?'var(--g)':cd<0?'var(--r)':''):'');
+  var cdCol=cd!=null?(cd>0?'var(--g)':cd<0?'var(--r)':'var(--m)'):'var(--m)';
+  var obi=of.obiSmoothed;
+  var obiCol=obi!=null?(obi>0.15?'var(--g)':obi<-0.15?'var(--r)':'var(--m)'):'var(--m)';
+  // top stat bar
+  var html='<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">';
+  html+=ofStat('OBI Signal',sig||'–',sigCol);
+  html+=ofStat('OBI (10t avg)',obi!=null?obi.toFixed(3):'–',obiCol);
+  html+=ofStat('OBI Raw',of.obiRaw!=null?of.obiRaw.toFixed(3):'–','');
+  html+=ofStat('Cum Delta',cd!=null?(cd>=0?'+':'')+Number(cd).toLocaleString():'–',cdCol);
+  html+=ofStat('Bid Qty×3',of.bidQtyTop3!=null?Number(of.bidQtyTop3).toLocaleString():'–','var(--g)');
+  html+=ofStat('Ask Qty×3',of.askQtyTop3!=null?Number(of.askQtyTop3).toLocaleString():'–','var(--r)');
+  if(of.absorption){
+    html+='<div style="display:flex;align-items:center;justify-content:center;background:#f59e0b1a;border:1px solid #f59e0b44;border-radius:5px;padding:6px 12px">'
+      +'<span style="font-size:11px;font-weight:700;color:#f59e0b;letter-spacing:.5px">⚠ ABSORPTION</span></div>';
+  }
+  html+='</div>';
+  // delta/tick detail row
   var dp=of.deltaPerTick;
-  rows+=renderIndRow('Delta / Tick',dp!=null?Number(dp).toLocaleString():'–',dp!=null?(dp>0?'var(--g)':dp<0?'var(--r)':''):'');
-  el.innerHTML=rows;
+  var dpCol=dp!=null?(dp>0?'var(--g)':dp<0?'var(--r)':'var(--m)'):'var(--m)';
+  html+='<div style="display:flex;gap:16px;flex-wrap:wrap">';
+  html+=renderIndRow('Delta / Tick',dp!=null?(dp>=0?'+':'')+Number(dp).toLocaleString():'–',dpCol);
+  html+='</div>';
+  el.innerHTML=html;
 }
 
 // ── Main applyUpdate ───────────────────────────────────────────────
