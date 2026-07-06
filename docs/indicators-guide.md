@@ -616,25 +616,85 @@ Price has been falling. Suddenly 8,000 contracts trade at 24,000 and price moves
 ### What SCSE Means
 SCSE stands for **Spartan / Surfing / Clean / Edge** — the four lifecycle states where the engine considers conditions tradeable.
 
+---
+
 ### Spartan Signal
 
-**What it measures:**
-A proprietary score derived from the combination of multiple aligned conditions in a single stock or across the index. "SPARTAN_UP" fires on individual NIFTY50 stocks when their own technical conditions align bullishly; "SPARTAN_DN" for bearish.
+**File:** `src/cli/stream-suggest.ts` — stock flow tracking section
+
+**What it actually measures (the real implementation):**
+Spartan is a **turnover-based signal**, not a technical indicator. For every NIFTY50 stock, the engine tracks the traded value (in Indian Rupees) inside each 1-minute candle bucket:
+
+```
+turnover (INR) = Σ (volume_delta × last_price) per 1-minute bucket
+```
+
+where `volume_delta` is the change in cumulative volume between ticks within that bucket.
+
+**Thresholds:**
+- `turnoverInr ≥ ₹50 crore in 1 minute` → **SPARTAN** (extremely high institutional activity)
+- `₹10 crore ≤ turnoverInr < ₹50 crore` → **SURFING** (elevated but not institutional)
+- `₹5 crore ≤ turnoverInr < ₹10 crore` → records lastBuy / lastSell timestamp only
+- Below ₹5 crore → ignored
+
+Direction is then overlaid:
+- Stock price moved up from prev close (>0.02%) → `SPARTAN_UP` or `SURFINGUP`
+- Stock price moved down (<−0.02%) → `SPARTAN_DN` or `SURFINGDN`
+- Otherwise → `SPARTAN_FLAT` / `SURFINGFLAT`
 
 **What the signal means:**
-Spartan signals across multiple NIFTY50 stocks are a leading indicator of index direction. When 20+ stocks are showing SPARTAN_UP simultaneously, the index is likely heading higher. Net Spartan (UP count − DN count) is shown in the stat bar.
+₹50 crore traded in a single minute in one NIFTY50 stock means a very large institution — a mutual fund, FII, or HNI — is making a significant move. These are exactly the participants who move the index. When you see 15–20 NIFTY50 stocks crossing this threshold in the same direction, the index move is being driven by real money, not retail noise.
 
-**Role:** Feeds into the lifecycle state computation. Used as a "breadth of signals" measure beyond just price movement.
+**Example:**
+RELIANCE shows SPARTAN_UP: ₹80cr traded in 1 minute, price up 0.4%.
+TCS shows SPARTAN_UP: ₹55cr traded, price up 0.3%.
+HDFC shows SPARTAN_UP: ₹65cr traded, price up 0.2%.
+
+Three index heavyweights seeing institutional buying simultaneously → the NIFTY rally is real.
+
+**Aggregate use:**
+```
+spartanUp  = count of stocks showing SPARTAN_UP right now
+spartanDn  = count of stocks showing SPARTAN_DN right now
+spartanNet = spartanUp − spartanDn   ← shown in stat bar
+```
+
+**Role:** Feeds directly into the lifecycle state (`CLEAN_BULLISH_FLOW`, `CLEAN_BEARISH_FLOW`). When spartanNet is significantly positive, lifecycle shifts toward bullish — prediction gates for LONG open up.
+
+---
 
 ### Surfing Signal
 
-**What it measures:**
-SURFINGUP/SURFINGDN fires when a stock's price is riding above/below its moving averages with confirmed momentum — like "surfing" a wave.
+**What it actually measures:**
+Same turnover computation as Spartan, but at a lower threshold: **₹10–50 crore per minute**. This is elevated but not institutional-grade activity — could be large retail traders, smaller funds, or HNIs.
+
+Direction uses the same price % change logic.
 
 **What the signal means:**
-Surfing stocks are in clean trending setups. When many NIFTY50 stocks are "surfing up," the underlying market structure is strongly bullish.
+Surfing represents "following the smart retail and small-fund money." Not as powerful as Spartan individually, but when many stocks are simultaneously SURFINGUP, it still indicates broad participation in a rally.
 
-**Role:** Combined with Spartan counts to determine lifecycle state. High Surfing Up count → CLEAN_BULLISH_FLOW lifecycle state → prediction gates pass more easily.
+**Combined net:**
+```
+surfNet = surfingUp − surfingDn   ← shown in stat bar
+```
+
+**The combined score (spartanNet + surfNet) tells you:**
+- Both positive and high: broad, deep buying across the index — highest quality bull signal
+- spartanNet positive but surfNet negative: institutions buying but smart retail selling — mixed; caution
+- Both negative: deep broad selling — highest quality bear signal
+
+**Role:** Combined with spartanNet to compute lifecycle state. The lifecycle engine adds these counts as a "strength" parameter alongside RSI, trend, and breadth.
+
+---
+
+### Stock Signal History
+
+For each NIFTY50 stock, the engine records the **timestamp** of its last Spartan/Surfing event:
+- `lastSpartanUp`, `lastSpartanDn`
+- `lastSurfingUp`, `lastSurfingDn`
+- `lastBuy`, `lastSell` (any turnover ≥ ₹5cr in direction)
+
+This history is displayed in the Stock Signals table in the UI, showing which stocks were recently active and in which direction. A stock that showed SPARTAN_UP 3 minutes ago is still relevant context even if this particular minute was quiet.
 
 ---
 
