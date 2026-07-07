@@ -2138,7 +2138,6 @@ async function main() {
     console.log(JSON.stringify(snap));
     if (telegram && isMarketOpen()) {
       telegram.maybeSendSignal(snap).catch(() => {});
-      telegram.maybeSendStockFlow(snap).catch(() => {});
       telegram.sendMarketCondition(snap).catch(() => {});
       for (const pred of snap.predictionLog ?? []) {
         if (pred.outcome === "PENDING") {
@@ -2249,7 +2248,6 @@ async function main() {
     console.log(JSON.stringify(snap));
     if (telegram && isMarketOpen()) {
       telegram.maybeSendSignal(snap).catch(() => {});
-      telegram.maybeSendStockFlow(snap).catch(() => {});
       telegram.sendMarketCondition(snap).catch(() => {});
       for (const pred of snap.predictionLog ?? []) {
         if (pred.outcome === "PENDING") {

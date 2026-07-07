@@ -386,33 +386,96 @@ async function renderMarketConditionCardPng(params: {
   condition: MarketCondition;
   session: string;
   asof: string;
+  spartanUp: number;
+  spartanDn: number;
+  surfingUp: number;
+  surfingDn: number;
+  topStocks: Array<{ symbol: string; dir: "UP" | "DOWN" }>;
 }): Promise<Uint8Array> {
   const { createCanvas } = await import("@napi-rs/canvas");
   const font = await ensureFonts();
   const meta = CONDITION_META[params.condition];
 
-  const W = 690, H = 510;
+  const W = 690;
+  const lx = 60, rx = W - 60, mid = (lx + rx) / 2;
+  const condH  = 90;
+  const flowH  = 100;
+  const gap    = 12;
+  const stockH = params.topStocks.length > 0 ? params.topStocks.length * 40 + 28 : 0;
+  const H = 270 + condH + gap + flowH + (stockH > 0 ? gap + stockH : 0) + 70;
+
   const canvas = createCanvas(W, H);
   const ctx = canvas.getContext("2d");
 
   ctx.save();
-  const sess = params.session.replace(/_/g, " ");
-  const { lx, rx, top, bottom } = drawAlgobotTemplate(ctx, font, W, H, `NIFTY 50  ·  ${sess}  ·  ${toIst(params.asof)}`);
+  drawAlgobotTemplate(ctx, font, W, H, `NIFTY 50  ·  ${params.session.replace(/_/g, " ")}  ·  ${toIst(params.asof)}`);
 
-  // ── Market condition box — only the headline state, colour-graded ────────
-  const boxH = bottom - top;
-  rr(ctx, lx, top, rx - lx, boxH, 10);
+  // ── Box 1: Market Condition ──────────────────────────────────────────────
+  let y = 270;
+  rr(ctx, lx, y, rx - lx, condH, 10);
   ctx.fillStyle = "#2a1515"; ctx.fill();
   ctx.globalAlpha = 0.4; ctx.strokeStyle = ALGOBOT_GOLD; ctx.lineWidth = 1; ctx.stroke();
   ctx.globalAlpha = 1;
 
-  ctx.fillStyle = ALGOBOT_GOLD; ctx.font = `600 14px "${font}"`;
-  ctx.fillText("MARKET CONDITION", lx + 20, top + 30);
+  ctx.fillStyle = ALGOBOT_GOLD; ctx.font = `600 12px "${font}"`;
+  ctx.fillText("MARKET CONDITION", lx + 20, y + 22);
 
-  ctx.fillStyle = meta.accent; ctx.font = `800 56px "${font}"`;
+  ctx.fillStyle = meta.accent; ctx.font = `800 40px "${font}"`;
   ctx.textAlign = "center";
-  ctx.fillText(meta.label, W / 2, top + boxH / 2 + 18);
+  ctx.fillText(`${meta.icon}  ${meta.label}`, W / 2, y + 70);
   ctx.textAlign = "left";
+
+  // ── Box 2: Spartan / Surfing flow ────────────────────────────────────────
+  y += condH + gap;
+  rr(ctx, lx, y, rx - lx, flowH, 10);
+  ctx.fillStyle = "#1a1a2a"; ctx.fill();
+  ctx.globalAlpha = 0.4; ctx.strokeStyle = ALGOBOT_GOLD; ctx.lineWidth = 1; ctx.stroke();
+  ctx.globalAlpha = 1;
+
+  ctx.fillStyle = ALGOBOT_GOLD; ctx.font = `600 12px "${font}"`;
+  ctx.fillText("SPARTAN FLOW", lx + 20, y + 22);
+  ctx.fillText("SURFING FLOW",  mid + 20, y + 22);
+
+  ctx.globalAlpha = 0.2; ctx.strokeStyle = ALGOBOT_GOLD; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(mid, y + 10); ctx.lineTo(mid, y + flowH - 10); ctx.stroke();
+  ctx.globalAlpha = 1;
+
+  ctx.fillStyle = "#22c55e"; ctx.font = `700 28px "${font}"`;
+  ctx.fillText(`▲  ${params.spartanUp}`, lx + 20, y + 58);
+  ctx.fillText(`▲  ${params.surfingUp}`,  mid + 20, y + 58);
+
+  ctx.fillStyle = "#ef4444"; ctx.font = `700 28px "${font}"`;
+  ctx.fillText(`▼  ${params.spartanDn}`, lx + 20, y + 92);
+  ctx.fillText(`▼  ${params.surfingDn}`,  mid + 20, y + 92);
+
+  // ── Box 3: Top Spartan stocks (only when present) ────────────────────────
+  if (params.topStocks.length > 0) {
+    y += flowH + gap;
+    rr(ctx, lx, y, rx - lx, stockH, 10);
+    ctx.fillStyle = "#0d1020"; ctx.fill();
+    ctx.globalAlpha = 0.4; ctx.strokeStyle = ALGOBOT_GOLD; ctx.lineWidth = 1; ctx.stroke();
+    ctx.globalAlpha = 1;
+
+    ctx.fillStyle = ALGOBOT_GOLD; ctx.font = `600 12px "${font}"`;
+    ctx.fillText("TOP SPARTAN STOCKS", lx + 20, y + 20);
+
+    for (let i = 0; i < params.topStocks.length; i++) {
+      const st = params.topStocks[i];
+      const sy = y + 28 + i * 40;
+      const col = st.dir === "UP" ? "#22c55e" : "#ef4444";
+      ctx.fillStyle = "#e8d4b8"; ctx.font = `700 20px "${font}"`;
+      ctx.fillText(st.symbol, lx + 20, sy + 24);
+      ctx.fillStyle = col; ctx.font = `800 22px "${font}"`;
+      ctx.textAlign = "right";
+      ctx.fillText(st.dir === "UP" ? "▲" : "▼", rx - 20, sy + 24);
+      ctx.textAlign = "left";
+      if (i < params.topStocks.length - 1) {
+        ctx.globalAlpha = 0.1; ctx.strokeStyle = ALGOBOT_GOLD; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(lx + 10, sy + 34); ctx.lineTo(rx - 10, sy + 34); ctx.stroke();
+        ctx.globalAlpha = 1;
+      }
+    }
+  }
 
   ctx.restore();
   return canvas.toBuffer("image/png");
@@ -689,10 +752,8 @@ export class TelegramNotifier {
   private lastStockSentAt = 0;
   private warnedMissing = false;
 
-  // Market condition tracking
-  private lastCondition: MarketCondition | null = null;
-  private lastConditionAt = 0;
-  private readonly conditionDebounceMs = 15 * 60_000; // 15 min between same condition
+  // Market condition tracking — only fires on state change to STRONG_BULLISH or BEARISH
+  private lastSentCondition: MarketCondition | null = null;
 
   // Prediction tracking — avoid sending same ID twice
   private readonly sentPredIds = new Set<string>();
@@ -1048,19 +1109,38 @@ export class TelegramNotifier {
     if (lc.session === "CLOSED") return;
 
     const condition = lifecycleToCondition(String(lc.state ?? ""));
-    const now = Date.now();
 
-    // Only send if condition changed OR >15 min since last alert for same condition
-    if (condition === this.lastCondition && now - this.lastConditionAt < this.conditionDebounceMs) return;
+    // Only alert for strong states — ignore MILDLY_BULLISH and NEUTRAL
+    if (condition !== "STRONG_BULLISH" && condition !== "BEARISH") return;
 
-    const params = {
-      condition,
-      session: String(lc.session ?? "–"),
-      asof: String(snapshot.asof ?? nowIso()),
-    };
+    // Fire only on state change — never re-fire for the same state
+    if (condition === this.lastSentCondition) return;
+
+    // Extract Spartan/Surfing data from snapshot
+    const sigs = Array.isArray((snapshot as any).stockSignals)
+      ? ((snapshot as any).stockSignals as any[])
+      : [];
+    const spartanUp  = sigs.filter((x: any) => x?.label === "SPARTAN_UP").length;
+    const spartanDn  = sigs.filter((x: any) => x?.label === "SPARTAN_DN").length;
+    const surfingUp  = sigs.filter((x: any) => x?.label === "SURFINGUP").length;
+    const surfingDn  = sigs.filter((x: any) => x?.label === "SURFINGDN").length;
+    const topStocks  = sigs
+      .filter((x: any) => x?.mode === "SPARTAN" && (x?.label === "SPARTAN_UP" || x?.label === "SPARTAN_DN"))
+      .sort((a: any, b: any) => (Number(b?.turnoverCr_1m) || 0) - (Number(a?.turnoverCr_1m) || 0))
+      .slice(0, 4)
+      .map((x: any) => ({
+        symbol: String(x.symbol ?? x.key ?? "–"),
+        dir: (x.label === "SPARTAN_UP" ? "UP" : "DOWN") as "UP" | "DOWN",
+      }));
+
+    const session = String(lc.session ?? "–");
+    const asof    = String(snapshot.asof ?? nowIso());
 
     try {
-      const png = await renderMarketConditionCardPng(params);
+      const png = await renderMarketConditionCardPng({
+        condition, session, asof,
+        spartanUp, spartanDn, surfingUp, surfingDn, topStocks,
+      });
       const meta = CONDITION_META[condition];
       for (const chatId of this.chatIds) {
         await sendTelegramPhoto({
@@ -1068,19 +1148,23 @@ export class TelegramNotifier {
           chatId,
           photoPng: png,
           filename: "market.png",
-          caption: `${meta.icon} ${meta.label}  ·  ${params.session.replace(/_/g, " ")}`,
+          caption: `${meta.icon} ${meta.label}  ·  ${session.replace(/_/g, " ")}  ·  Spartan ▲${spartanUp} ▼${spartanDn}`,
         });
       }
     } catch {
       const meta = CONDITION_META[condition];
-      const text = `${meta.icon} NIFTY: ${meta.label}\nSession: ${params.session}`;
+      const text = [
+        `${meta.icon} NIFTY: ${meta.label}`,
+        `Session: ${session}`,
+        `Spartan  ▲ ${spartanUp}  ▼ ${spartanDn}    Surfing  ▲ ${surfingUp}  ▼ ${surfingDn}`,
+        topStocks.length ? topStocks.map(s => `${s.symbol} ${s.dir === "UP" ? "▲" : "▼"}`).join("  ") : "",
+      ].filter(Boolean).join("\n");
       for (const chatId of this.chatIds) {
         await sendTelegramMessage({ token: this.token as string, chatId, text });
       }
     }
 
-    this.lastCondition = condition;
-    this.lastConditionAt = now;
+    this.lastSentCondition = condition;
   }
 
   async sendPrediction(pred: TelegramPrediction): Promise<void> {
