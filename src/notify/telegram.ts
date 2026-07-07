@@ -191,7 +191,8 @@ function drawAlgobotIcon(ctx: any, cx: number, cy: number, size: number, accent:
 const CONDITION_GRADIENT: Record<MarketCondition, { from: string; to: string }> = {
   STRONG_BULLISH: { from: "#123018", to: "#04140a" },
   MILDLY_BULLISH: { from: "#1a2a1f", to: "#0a140d" },
-  BEARISH:        { from: "#301214", to: "#140404" },
+  STRONG_BEARISH: { from: "#301214", to: "#140404" },
+  MILDLY_BEARISH: { from: "#2a1518", to: "#140608" },
   NEUTRAL:        { from: "#302510", to: "#140d04" },
 };
 
@@ -331,7 +332,7 @@ async function renderSignalCardPng(params: {
   return canvas.toBuffer("image/png");
 }
 
-export type MarketCondition = "STRONG_BULLISH" | "MILDLY_BULLISH" | "BEARISH" | "NEUTRAL";
+export type MarketCondition = "STRONG_BULLISH" | "MILDLY_BULLISH" | "STRONG_BEARISH" | "MILDLY_BEARISH" | "NEUTRAL";
 
 export type TelegramPrediction = {
   id: string;
@@ -370,15 +371,17 @@ export type TelegramSignalSnapshot = {
 
 export function lifecycleToCondition(state: string): MarketCondition {
   if (state === "CLEAN_BULLISH_FLOW") return "STRONG_BULLISH";
-  if (state === "CE_EDGE") return "MILDLY_BULLISH";
-  if (state === "CLEAN_BEARISH_FLOW" || state === "PE_EDGE") return "BEARISH";
+  if (state === "CE_EDGE")            return "MILDLY_BULLISH";
+  if (state === "CLEAN_BEARISH_FLOW") return "STRONG_BEARISH";
+  if (state === "PE_EDGE")            return "MILDLY_BEARISH";
   return "NEUTRAL";
 }
 
 const CONDITION_META: Record<MarketCondition, { label: string; icon: string; accent: string }> = {
   STRONG_BULLISH: { label: "STRONG BULLISH",  icon: "▲▲", accent: "#22c55e" },
   MILDLY_BULLISH: { label: "MILDLY BULLISH",  icon: "▲",  accent: "#86efac" },
-  BEARISH:        { label: "BEARISH",          icon: "▼",  accent: "#ef4444" },
+  STRONG_BEARISH: { label: "STRONG BEARISH",  icon: "▼▼", accent: "#ef4444" },
+  MILDLY_BEARISH: { label: "MILDLY BEARISH",  icon: "▼",  accent: "#f87171" },
   NEUTRAL:        { label: "NEUTRAL",          icon: "◆",  accent: "#f59e0b" },
 };
 
@@ -558,7 +561,7 @@ async function renderPredictionCardPng(params: {
   // Bg + panel
   ctx.fillStyle = "#050810"; ctx.fillRect(0, 0, W, H);
   const pX = 12, pY = 10, pW = W - 24, pH = H - 20;
-  const cardGrad = isLong ? CONDITION_GRADIENT.STRONG_BULLISH : CONDITION_GRADIENT.BEARISH;
+  const cardGrad = isLong ? CONDITION_GRADIENT.STRONG_BULLISH : CONDITION_GRADIENT.STRONG_BEARISH;
 
   // ── Branded panel: diagonal colour-graded background + AlgoBot icon ──────
   ctx.save();
@@ -752,7 +755,7 @@ export class TelegramNotifier {
   private lastStockSentAt = 0;
   private warnedMissing = false;
 
-  // Market condition tracking — only fires on state change to STRONG_BULLISH or BEARISH
+  // Market condition tracking — only fires on state change to STRONG_BULLISH or STRONG_BEARISH
   private lastSentCondition: MarketCondition | null = null;
 
   // Prediction tracking — avoid sending same ID twice
@@ -1110,8 +1113,8 @@ export class TelegramNotifier {
 
     const condition = lifecycleToCondition(String(lc.state ?? ""));
 
-    // Only alert for strong states — ignore MILDLY_BULLISH and NEUTRAL
-    if (condition !== "STRONG_BULLISH" && condition !== "BEARISH") return;
+    // Only alert for strong states — ignore MILDLY_BULLISH, MILDLY_BEARISH, and NEUTRAL
+    if (condition !== "STRONG_BULLISH" && condition !== "STRONG_BEARISH") return;
 
     // Fire only on state change — never re-fire for the same state
     if (condition === this.lastSentCondition) return;
