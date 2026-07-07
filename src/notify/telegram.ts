@@ -1012,6 +1012,11 @@ export class TelegramNotifier {
 
     if (key === "WAIT") return;
 
+    // Only send trade signals during strong market conditions
+    const sigLc = snapshot.lifecycle;
+    const sigCondition = sigLc ? lifecycleToCondition(String(sigLc.state ?? "")) : "NEUTRAL";
+    if (sigCondition !== "STRONG_BULLISH" && sigCondition !== "STRONG_BEARISH") return;
+
     const now = Date.now();
     if (this.lastKey === key) return;
     if (now - this.lastSentAt < this.minIntervalMs) return;
