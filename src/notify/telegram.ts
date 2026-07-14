@@ -753,6 +753,8 @@ export class TelegramNotifier {
   private lastSentAt = 0;
   private lastStockKey: string | null = null;
   private lastStockSentAt = 0;
+  private lastSpreadSentAt = 0;
+  private readonly SPREAD_MIN_MS = 25 * 60_000; // credit spreads: min 25 min between alerts
   private warnedMissing = false;
 
   // Market condition tracking — only fires on state change to STRONG_BULLISH or STRONG_BEARISH
@@ -1021,6 +1023,10 @@ export class TelegramNotifier {
     if (this.lastKey === key) return;
     if (now - this.lastSentAt < this.minIntervalMs) return;
 
+    // Credit spreads: enforce a longer minimum interval — strikes shift frequently
+    // with ATM oscillation and would otherwise fire on every small NIFTY move
+    if (key.startsWith("SPREAD") && now - this.lastSpreadSentAt < this.SPREAD_MIN_MS) return;
+
     const data = this.buildSignalCardData(snapshot);
 
     try {
@@ -1056,6 +1062,7 @@ export class TelegramNotifier {
 
     this.lastKey = key;
     this.lastSentAt = now;
+    if (key.startsWith("SPREAD")) this.lastSpreadSentAt = now;
   }
 
   async maybeSendStockFlow(snapshot: TelegramSignalSnapshot): Promise<void> {

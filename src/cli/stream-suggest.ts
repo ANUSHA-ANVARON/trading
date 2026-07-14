@@ -1919,6 +1919,14 @@ async function main() {
       const bb5 = s5.signals?.bb ?? null;
       const bb15 = s15.signals?.bb ?? null;
 
+      // Options context available at prediction time
+      const predPcr    = typeof optionsSuggestion?.chain?.totals?.pcr === "number" ? optionsSuggestion.chain.totals.pcr : null;
+      const predCeIv   = typeof optionsSuggestion?.greeks?.atm?.ce?.iv === "number" ? optionsSuggestion.greeks.atm.ce.iv : null;
+      const predPeIv   = typeof optionsSuggestion?.greeks?.atm?.pe?.iv === "number" ? optionsSuggestion.greeks.atm.pe.iv : null;
+      const predObiSig = obiTracker.snapshot().obiSignal;
+      const predAtrPct = (typeof s15.signals?.atrPct === "number" ? s15.signals.atrPct : null)
+                      ?? (typeof s5.signals?.atrPct  === "number" ? s5.signals.atrPct  : null);
+
       for (const dir of ["LONG", "SHORT"] as const) {
         // Gate 0: market must be open — never fire predictions outside trading hours
         if (lifecycle.session === "CLOSED") continue;
@@ -1926,25 +1934,25 @@ async function main() {
         const lastFired = dir === "LONG" ? lastPredLong : lastPredShort;
         if (nowMs - lastFired < PRED_DEBOUNCE_MS) continue;
 
-        // Gate 1: lifecycle must be in a clean/edge state matching direction
-        const validStates = dir === "LONG" ? ["CLEAN_BULLISH_FLOW", "CE_EDGE"] : ["CLEAN_BEARISH_FLOW", "PE_EDGE"];
+        // Gate 1: lifecycle must be in a strong state only (CE_EDGE/PE_EDGE excluded)
+        const validStates = dir === "LONG" ? ["CLEAN_BULLISH_FLOW"] : ["CLEAN_BEARISH_FLOW"];
         if (!validStates.includes(lifecycle.state)) continue;
 
-        // Gate 2: at least 2 of 3 TFs agree
+        // Gate 2: all 3 TFs must agree (raised from 2/3 to reduce false signals)
         const tfRecs = [s1.recommendation, s5.recommendation, s15.recommendation];
         const tfAgree = tfRecs.filter((r) => r === dir).length;
-        if (tfAgree < 2) continue;
+        if (tfAgree < 3) continue;
 
-        // Gate 3: RSI confirms on 5m or 15m
+        // Gate 3: RSI confirms on BOTH 5m and 15m
         const rsiOk = dir === "LONG"
-          ? ((rsi5 !== null && rsi5 >= 52) || (rsi15 !== null && rsi15 >= 50))
-          : ((rsi5 !== null && rsi5 <= 48) || (rsi15 !== null && rsi15 <= 50));
+          ? (rsi5 !== null && rsi5 >= 53 && rsi15 !== null && rsi15 >= 50)
+          : (rsi5 !== null && rsi5 <= 47 && rsi15 !== null && rsi15 <= 50);
         if (!rsiOk) continue;
 
         // Gate 4: BB confirms on 5m or 15m (price not at extreme, in right half of band)
         const bbOk = dir === "LONG"
-          ? ((bb5 && bb5.pctB > 0.45 && bb5.pctB < 0.92) || (bb15 && bb15.pctB > 0.45 && bb15.pctB < 0.92))
-          : ((bb5 && bb5.pctB < 0.55 && bb5.pctB > 0.08) || (bb15 && bb15.pctB < 0.55 && bb15.pctB > 0.08));
+          ? ((bb5 && bb5.pctB > 0.45 && bb5.pctB < 0.88) || (bb15 && bb15.pctB > 0.45 && bb15.pctB < 0.88))
+          : ((bb5 && bb5.pctB < 0.55 && bb5.pctB > 0.12) || (bb15 && bb15.pctB < 0.55 && bb15.pctB > 0.12));
         if (!bbOk) continue;
 
         // Gate 5: breadth supports
@@ -1953,12 +1961,40 @@ async function main() {
           : ((breadth.weighted_move_pct ?? 0) < -0.05 && advDecRatio < 1.0);
         if (!breadthOk) continue;
 
+        // Gate 6: PCR not strongly against direction (skip if no data)
+        if (predPcr !== null) {
+          // PCR < 0.85 = heavy call buying = bullish sentiment → don't SHORT
+          // PCR > 1.15 = heavy put buying = bearish sentiment → don't LONG
+          const pcrOk = dir === "LONG" ? predPcr <= 1.15 : predPcr >= 0.85;
+          if (!pcrOk) continue;
+        }
+
+        // Gate 7: IV skew not strongly against direction (skip if no IV data)
+        if (predCeIv !== null && predPeIv !== null) {
+          // Positive skew (put IV > call IV) = market pricing downside risk = bearish tilt
+          const skew = predPeIv - predCeIv;
+          const skewOk = dir === "LONG" ? skew < 0.08 : skew > -0.08;
+          if (!skewOk) continue;
+        }
+
         // All gates passed — fire prediction
         if (predRefPx === null || !Number.isFinite(predRefPx)) continue;
         const bestTfSrc = [s15, s5, s1].find((s) => s.recommendation === dir);
         const tfLabel = (bestTfSrc?.timeframe ?? "5m") as "1m" | "5m" | "15m";
-        const tpPoints = predRefPx * (tpPct / 100);
-        const slPoints = predRefPx * (slPct / 100);
+
+        // ATR-adaptive TP/SL: widen when market is moving more than the default assumes
+        const dynTpPct = predAtrPct !== null ? Math.max(tpPct, predAtrPct * 1.5) : tpPct;
+        const dynSlPct = predAtrPct !== null ? Math.max(slPct, predAtrPct * 0.75) : slPct;
+        const tpPoints = predRefPx * (dynTpPct / 100);
+        const slPoints = predRefPx * (dynSlPct / 100);
+
+        // Confidence: base from TF scoring + OBI boost + PCR boost
+        let conf = Math.max(Number(s5.confidence ?? 0), Number(s15.confidence ?? 0));
+        if (predObiSig === (dir === "LONG" ? "BUY" : "SELL")) conf = Math.min(0.95, conf * 1.08);
+        if (predPcr !== null) {
+          if ((dir === "LONG" && predPcr >= 1.1) || (dir === "SHORT" && predPcr <= 0.9))
+            conf = Math.min(0.95, conf * 1.05);
+        }
 
         const entry: PredictionEntry = {
           id: `${nowMs}-${dir}`,
@@ -1968,7 +2004,7 @@ async function main() {
           entryPrice: predRefPx,
           targetPrice: +(dir === "LONG" ? predRefPx + tpPoints : predRefPx - tpPoints).toFixed(2),
           stopPrice: +(dir === "LONG" ? predRefPx - slPoints : predRefPx + slPoints).toFixed(2),
-          confidence: Math.max(Number(s5.confidence ?? 0), Number(s15.confidence ?? 0)),
+          confidence: +conf.toFixed(3),
           lifecycle: lifecycle.state,
           session: lifecycle.session,
           signals: {
