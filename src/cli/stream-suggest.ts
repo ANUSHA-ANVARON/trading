@@ -700,8 +700,8 @@ async function main() {
   const maxRiskPerTradeVal = maxRiskPerTrade ? Number(maxRiskPerTrade) : null;
 
   // Simple trade-plan knobs (for UI guidance only; not guaranteed).
-  const tpPct = Number(getArgValue("--tpPct") ?? getArgValue("--tp-pct") ?? "0.25");
-  const slPct = Number(getArgValue("--slPct") ?? getArgValue("--sl-pct") ?? "0.15");
+  const tpPct = Number(getArgValue("--tpPct") ?? getArgValue("--tp-pct") ?? "0.55");
+  const slPct = Number(getArgValue("--slPct") ?? getArgValue("--sl-pct") ?? "0.25");
   const creditTakePct = Number(getArgValue("--creditTakePct") ?? getArgValue("--credit-take-pct") ?? "0.5");
   const creditStopMult = Number(getArgValue("--creditStopMult") ?? getArgValue("--credit-stop-mult") ?? "2");
 
@@ -1977,14 +1977,22 @@ async function main() {
           if (!skewOk) continue;
         }
 
+        // Gate 8: RSI not already overextended — entering on exhaustion = stop hit
+        // If RSI is already deep in overbought/oversold, the move is done, not starting
+        const rsiExtendedOk = dir === "LONG"
+          ? (rsi5 === null || rsi5 <= 68) && (rsi15 === null || rsi15 <= 65)
+          : (rsi5 === null || rsi5 >= 32) && (rsi15 === null || rsi15 >= 35);
+        if (!rsiExtendedOk) continue;
+
         // All gates passed — fire prediction
         if (predRefPx === null || !Number.isFinite(predRefPx)) continue;
         const bestTfSrc = [s15, s5, s1].find((s) => s.recommendation === dir);
         const tfLabel = (bestTfSrc?.timeframe ?? "5m") as "1m" | "5m" | "15m";
 
-        // ATR-adaptive TP/SL: widen when market is moving more than the default assumes
-        const dynTpPct = predAtrPct !== null ? Math.max(tpPct, predAtrPct * 1.5) : tpPct;
-        const dynSlPct = predAtrPct !== null ? Math.max(slPct, predAtrPct * 0.75) : slPct;
+        // ATR-adaptive TP/SL — SL must clear NIFTY's noise floor (≥1.2× ATR)
+        // TP targets 2.5× SL minimum for a positive expectancy at 50% win rate
+        const dynSlPct = predAtrPct !== null ? Math.max(slPct, predAtrPct * 1.2) : slPct;
+        const dynTpPct = predAtrPct !== null ? Math.max(tpPct, dynSlPct * 2.5)   : tpPct;
         const tpPoints = predRefPx * (dynTpPct / 100);
         const slPoints = predRefPx * (dynSlPct / 100);
 
