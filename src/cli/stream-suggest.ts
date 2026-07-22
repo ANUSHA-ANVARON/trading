@@ -94,6 +94,8 @@ type PredictionEntry = {
   outcomePrice: number | null;
   outcomeAt: string | null;
   pnlPoints: number | null;
+  trailingStopPrice: number | null; // moves to breakeven at 50% to target, locks profit at 75%
+  mfePoints: number | null;         // max favorable excursion seen so far
 };
 
 type OptionSelection = {
@@ -816,7 +818,15 @@ async function main() {
   let lastPredLong = 0;
   let lastPredShort = 0;
   let lastReportSession = "";
-  const PRED_DEBOUNCE_MS = 10 * 60_000;
+  const PRED_DEBOUNCE_MS = 20 * 60_000; // 20 min — reduces noise vs old 10 min
+
+  // Opening Range (9:15–9:30 IST) — bias filter for predictions
+  let orHigh: number | null = null;
+  let orLow:  number | null = null;
+  let orLocked = false; // locked once session moves past OPENING_RANGE
+
+  // Adaptive kill switch — pause predictions when strategy is losing
+  let killSwitchUntil = 0; // timestamp; 0 = not paused
 
   // Restore today's predictions from persistent storage so a server restart
   // doesn't wipe the in-memory log visible in the UI.
@@ -1902,27 +1912,85 @@ async function main() {
       lifecycleHistory.splice(0, lifecycleHistory.length - MAX_LIFECYCLE_HISTORY);
     }
 
+    // ── Opening Range tracking ────────────────────────────────────
+    // Lock in the high/low of the first 15 minutes (9:15–9:30 IST).
+    // Used as a directional bias filter for predictions.
+    if (!orLocked) {
+      if (lifecycle.session === "OPENING_RANGE" && c1.length > 0) {
+        // OR candles: those whose time falls in 09:15–09:30 IST (minutes 555–570)
+        const orCandles = c1.filter((c) => {
+          const istMin = ((new Date(c.time).getTime() + 5.5 * 3600_000) / 60_000) % (24 * 60);
+          return istMin >= 555 && istMin < 570;
+        });
+        if (orCandles.length > 0) {
+          orHigh = Math.max(...orCandles.map((c) => Number(c.high)));
+          orLow  = Math.min(...orCandles.map((c) => Number(c.low)));
+        }
+      } else if (lifecycle.session !== "OPENING_RANGE" && lifecycle.session !== "CLOSED") {
+        // Session has moved past OR — lock whatever we captured
+        if (orHigh !== null && orLow !== null) orLocked = true;
+      }
+    }
+    // Reset OR on a new trading day (detect by session going back to CLOSED then OPENING_RANGE)
+    if (lifecycle.session === "CLOSED") { orLocked = false; orHigh = null; orLow = null; }
+
     // ── Prediction engine ─────────────────────────────────────────
     // Use the spot index price (same basis as the ATM strike) rather than the
     // futures LTP, which trades at a basis premium and made entry/target/stop
     // levels look "ahead of" where NIFTY actually was.
     const predRefPx = spotLtp ?? futLtp;
 
-    // Step 1: resolve outcomes for pending predictions
+    // Step 1: resolve outcomes for pending predictions (includes trailing stop + MFE)
     if (predRefPx !== null && Number.isFinite(predRefPx)) {
       for (const p of predictionLog) {
         if (p.outcome !== "PENDING") continue;
+
+        // ── Trailing stop ─────────────────────────────────────────
+        // Once price has moved 50% toward target → move stop to breakeven.
+        // Once price has moved 75% toward target → lock in 40% of TP as stop.
+        const tpDist = Math.abs(p.targetPrice - p.entryPrice);
+        const favMove = p.direction === "LONG"
+          ? predRefPx - p.entryPrice
+          : p.entryPrice - predRefPx;
+        if (favMove > 0) {
+          p.mfePoints = Math.max(p.mfePoints ?? 0, +favMove.toFixed(2));
+          const progress = tpDist > 0 ? favMove / tpDist : 0;
+          if (progress >= 0.75) {
+            // Lock in 40% of TP distance as profit
+            const lockPts = tpDist * 0.40;
+            const newStop = p.direction === "LONG"
+              ? p.entryPrice + lockPts
+              : p.entryPrice - lockPts;
+            if (p.direction === "LONG" && newStop > (p.trailingStopPrice ?? 0))
+              p.trailingStopPrice = +newStop.toFixed(2);
+            if (p.direction === "SHORT" && newStop < (p.trailingStopPrice ?? Infinity))
+              p.trailingStopPrice = +newStop.toFixed(2);
+          } else if (progress >= 0.50) {
+            // Move stop to breakeven
+            if (p.direction === "LONG" && p.entryPrice > (p.trailingStopPrice ?? 0))
+              p.trailingStopPrice = +p.entryPrice.toFixed(2);
+            if (p.direction === "SHORT" && p.entryPrice < (p.trailingStopPrice ?? Infinity))
+              p.trailingStopPrice = +p.entryPrice.toFixed(2);
+          }
+        }
+        // Use trailing stop if tighter than original stop
+        const effectiveStop = p.trailingStopPrice !== null
+          ? (p.direction === "LONG"
+              ? Math.max(p.stopPrice, p.trailingStopPrice)
+              : Math.min(p.stopPrice, p.trailingStopPrice))
+          : p.stopPrice;
+
         const ageMs = Date.now() - new Date(p.asof).getTime();
         const expiryMs = p.timeframe === "1m" ? 15 * 60_000 : p.timeframe === "5m" ? 45 * 60_000 : 90 * 60_000;
         const nowTs = new Date().toISOString();
         let resolved = false;
         if (p.direction === "LONG") {
           if (predRefPx >= p.targetPrice) { p.outcome = "TARGET_HIT"; p.outcomePrice = predRefPx; p.outcomeAt = nowTs; p.pnlPoints = +(predRefPx - p.entryPrice).toFixed(2); resolved = true; }
-          else if (predRefPx <= p.stopPrice) { p.outcome = "STOP_HIT"; p.outcomePrice = predRefPx; p.outcomeAt = nowTs; p.pnlPoints = +(predRefPx - p.entryPrice).toFixed(2); resolved = true; }
+          else if (predRefPx <= effectiveStop) { p.outcome = "STOP_HIT"; p.outcomePrice = predRefPx; p.outcomeAt = nowTs; p.pnlPoints = +(predRefPx - p.entryPrice).toFixed(2); resolved = true; }
           else if (ageMs >= expiryMs) { p.outcome = "EXPIRED"; p.outcomePrice = predRefPx; p.outcomeAt = nowTs; p.pnlPoints = +(predRefPx - p.entryPrice).toFixed(2); resolved = true; }
         } else {
           if (predRefPx <= p.targetPrice) { p.outcome = "TARGET_HIT"; p.outcomePrice = predRefPx; p.outcomeAt = nowTs; p.pnlPoints = +(p.entryPrice - predRefPx).toFixed(2); resolved = true; }
-          else if (predRefPx >= p.stopPrice) { p.outcome = "STOP_HIT"; p.outcomePrice = predRefPx; p.outcomeAt = nowTs; p.pnlPoints = +(p.entryPrice - predRefPx).toFixed(2); resolved = true; }
+          else if (predRefPx >= effectiveStop) { p.outcome = "STOP_HIT"; p.outcomePrice = predRefPx; p.outcomeAt = nowTs; p.pnlPoints = +(p.entryPrice - predRefPx).toFixed(2); resolved = true; }
           else if (ageMs >= expiryMs) { p.outcome = "EXPIRED"; p.outcomePrice = predRefPx; p.outcomeAt = nowTs; p.pnlPoints = +(p.entryPrice - predRefPx).toFixed(2); resolved = true; }
         }
         if (resolved) persistPrediction(p as any, env.PREDICTIONS_DIR).catch(() => {});
@@ -1946,7 +2014,37 @@ async function main() {
       const predAtrPct = (typeof s15.signals?.atrPct === "number" ? s15.signals.atrPct : null)
                       ?? (typeof s5.signals?.atrPct  === "number" ? s5.signals.atrPct  : null);
 
+      // ── Kill switch ───────────────────────────────────────────────
+      // Pause all predictions when recent results show the strategy is failing.
+      // Check: last 5 resolved predictions win rate < 30%, OR last 3 all STOP_HIT.
+      if (nowMs < killSwitchUntil) {
+        // still paused — skip both directions
+      } else {
+        const resolved = predictionLog.filter((p) => p.outcome !== "PENDING" && p.outcome !== "EXPIRED").slice(0, 5);
+        const last3 = predictionLog.filter((p) => p.outcome !== "PENDING").slice(0, 3);
+        const recentWins = resolved.filter((p) => p.outcome === "TARGET_HIT").length;
+        const allStopHits = last3.length === 3 && last3.every((p) => p.outcome === "STOP_HIT");
+        if ((resolved.length >= 5 && recentWins / resolved.length < 0.30) || allStopHits) {
+          const pauseMs = allStopHits ? 60 * 60_000 : 30 * 60_000; // 1h or 30m
+          killSwitchUntil = nowMs + pauseMs;
+        }
+      }
+
+      // Intraday VWAP from all 5m closed candles (typical price × volume)
+      const predVwap = (() => {
+        if (c5.length === 0) return null;
+        const totalVol = c5.reduce((s, c) => s + (Number(c.volume) || 0), 0);
+        if (totalVol === 0) return null;
+        return c5.reduce((s, c) => {
+          const tp = (Number(c.high) + Number(c.low) + Number(c.close)) / 3;
+          return s + tp * (Number(c.volume) || 0);
+        }, 0) / totalVol;
+      })();
+
       for (const dir of ["LONG", "SHORT"] as const) {
+        // Kill switch active → skip
+        if (nowMs < killSwitchUntil) continue;
+
         // Gate 0: market must be in an active trading session
         // LATE_TRANSITION_CAUTION (14:30-15:00) and POST_3PM_REDUCED_RISK (15:00-15:30)
         // are too noisy for new entries — IV collapses, operators unwind positions,
@@ -2007,6 +2105,39 @@ async function main() {
           : (rsi5 === null || rsi5 >= 32) && (rsi15 === null || rsi15 >= 35);
         if (!rsiExtendedOk) continue;
 
+        // Gate 9: VWAP bias — price must be on the correct side of intraday VWAP
+        // Institutions use VWAP as the primary benchmark; fading VWAP = fighting the flow
+        if (predVwap !== null && predRefPx !== null) {
+          const vwapOk = dir === "LONG" ? predRefPx > predVwap : predRefPx < predVwap;
+          if (!vwapOk) continue;
+        }
+
+        // Gate 10: Market structure — 15m must show a clear trend, not RANGING
+        // RANGING markets produce the most false signals (SMA cross whipsaws)
+        const trendStr15 = s15.signals?.trendStructure ?? null;
+        if (trendStr15 === "RANGING") continue;
+        if (trendStr15 !== null) {
+          const structOk = dir === "LONG" ? trendStr15 === "UPTREND" : trendStr15 === "DOWNTREND";
+          if (!structOk) continue;
+        }
+
+        // Gate 11: Opening Range bias — only trade in the direction of the OR breakout
+        // Price above OR_HIGH = day has bullish bias; below OR_LOW = bearish bias
+        // If price is still inside the OR, the day's direction is not established yet
+        if (orHigh !== null && orLow !== null && predRefPx !== null) {
+          const orBiasOk = dir === "LONG" ? predRefPx > orHigh : predRefPx < orLow;
+          if (!orBiasOk) continue;
+        }
+
+        // Gate 12: Don't chase — if price is already >0.3% extended from 5m EMA9,
+        // the entry is late; the move is done and RSI is likely near extreme already
+        const ema9_5m = typeof s5.signals?.ema9 === "number" ? s5.signals.ema9 : null;
+        if (ema9_5m !== null && predRefPx !== null && ema9_5m > 0) {
+          const distPct = ((predRefPx - ema9_5m) / ema9_5m) * 100;
+          const chaseOk = dir === "LONG" ? distPct <= 0.30 : distPct >= -0.30;
+          if (!chaseOk) continue;
+        }
+
         // All gates passed — fire prediction
         if (predRefPx === null || !Number.isFinite(predRefPx)) continue;
         const bestTfSrc = [s15, s5, s1].find((s) => s.recommendation === dir);
@@ -2060,6 +2191,8 @@ async function main() {
           outcomePrice: null,
           outcomeAt: null,
           pnlPoints: null,
+          trailingStopPrice: +(dir === "LONG" ? predRefPx - slPoints : predRefPx + slPoints).toFixed(2),
+          mfePoints: 0,
         };
 
         predictionLog.unshift(entry);
