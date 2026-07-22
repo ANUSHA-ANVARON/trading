@@ -1947,8 +1947,12 @@ async function main() {
                       ?? (typeof s5.signals?.atrPct  === "number" ? s5.signals.atrPct  : null);
 
       for (const dir of ["LONG", "SHORT"] as const) {
-        // Gate 0: market must be open — never fire predictions outside trading hours
-        if (lifecycle.session === "CLOSED") continue;
+        // Gate 0: market must be in an active trading session
+        // LATE_TRANSITION_CAUTION (14:30-15:00) and POST_3PM_REDUCED_RISK (15:00-15:30)
+        // are too noisy for new entries — IV collapses, operators unwind positions,
+        // indicators whipsaw. Only trade MORNING_MOMENTUM, MIDDAY_GRIND, AFTERNOON_TRANSITION.
+        const blockedSessions = ["CLOSED", "OPENING_RANGE", "LATE_TRANSITION_CAUTION", "POST_3PM_REDUCED_RISK"];
+        if (blockedSessions.includes(lifecycle.session)) continue;
 
         const lastFired = dir === "LONG" ? lastPredLong : lastPredShort;
         if (nowMs - lastFired < PRED_DEBOUNCE_MS) continue;
@@ -2016,15 +2020,18 @@ async function main() {
         const slPoints = predRefPx * (dynSlPct / 100);
 
         // Confidence: base from TF scoring + OBI boost + PCR boost + AMT boost
+        // Hard cap at 0.80 — a technical system cannot be more than 80% certain;
+        // 95% confidence is misleading and creates overconfident position sizing.
+        const CONF_CAP = 0.80;
         let conf = Math.max(Number(s5.confidence ?? 0), Number(s15.confidence ?? 0));
-        if (predObiSig === (dir === "LONG" ? "BUY" : "SELL")) conf = Math.min(0.95, conf * 1.08);
+        if (predObiSig === (dir === "LONG" ? "BUY" : "SELL")) conf = Math.min(CONF_CAP, conf * 1.08);
         if (predPcr !== null) {
           if ((dir === "LONG" && predPcr >= 1.1) || (dir === "SHORT" && predPcr <= 0.9))
-            conf = Math.min(0.95, conf * 1.05);
+            conf = Math.min(CONF_CAP, conf * 1.05);
         }
         // AMT composite agrees with direction → extra confidence boost
         if (amtSignals.compositeSignal === (dir === "LONG" ? "BULL" : "BEAR")) {
-          conf = Math.min(0.95, conf * (1 + amtSignals.compositeScore * 0.04));
+          conf = Math.min(CONF_CAP, conf * (1 + amtSignals.compositeScore * 0.04));
         }
 
         const entry: PredictionEntry = {
