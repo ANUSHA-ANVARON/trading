@@ -7,6 +7,7 @@ import { pickNearExpiryNiftyFutureKey } from "../analysis/defaults";
 import { pickNearestWeeklyNiftyOptionExpiry } from "../analysis/defaults";
 import { sma, ema, dema, wma, rsi, macd, momentum, tsi, atr, bollingerBands, stdDev, historicalVolatility, linearRegressionCurve, pvt, vwap, asi, relativeVolume, volumeOscillator, candlePattern, trendStructure, supportLevel, resistanceLevel } from "../analysis/indicators";
 import { OBITracker } from "../analysis/orderFlow";
+import { AMTTracker, type AMTSnapshot } from "../analysis/auctionMarket";
 import { CandleAggregator } from "../live/candleAggregator";
 import { getInstruments } from "../instruments/instrumentsCache";
 import { createKiteTicker } from "../kite/ticker";
@@ -844,6 +845,7 @@ async function main() {
   const agg5m = new CandleAggregator({ timeframeSec: 300, maxCandles: 600 });
   const agg15m = new CandleAggregator({ timeframeSec: 900, maxCandles: 600 });
   const obiTracker = new OBITracker({ smoothWindow: 10, depthLevels: 3 });
+  const amtTracker = new AMTTracker();
 
   // Seed candles from Kite historical so indicators (SMA/RSI/ATR) are ready immediately.
   // Without this, 5m/15m can take a long time to become usable.
@@ -1042,6 +1044,7 @@ async function main() {
           agg5m.onTick(px, ts, vol);
           agg15m.onTick(px, ts, vol);
           obiTracker.onTick(t);
+          amtTracker.onTick(t);
         }
       }
     }
@@ -1082,6 +1085,7 @@ async function main() {
     rms: { maxDailyLoss: number | null; maxRiskPerTrade: number | null };
     options: any;
     orderFlow: any;
+    auctionMarket: AMTSnapshot;
     news: any;
     notes: string[];
   } {
@@ -1830,6 +1834,21 @@ async function main() {
       return computePivotLevels(prevDayCandle.h, prevDayCandle.l, prevDayCandle.c, refPx);
     })();
 
+    const amtSignals = amtTracker.computeSignals({
+      candles5m: c5,
+      candles15m: c15,
+      vwap: (() => {
+        const closes5 = c5.map((c) => Number(c.close));
+        const vols5 = c5.map((c) => Number(c.volume));
+        const totalVol = vols5.reduce((s, v) => s + v, 0);
+        if (totalVol === 0 || closes5.length === 0) return null;
+        return closes5.reduce((s, p, i) => s + p * vols5[i], 0) / totalVol;
+      })(),
+      cpr: pivotLevels ? (pivotLevels.tc.value + pivotLevels.bc.value) / 2 : null,
+      pdh: pivotLevels?.pdh.value ?? null,
+      pdl: pivotLevels?.pdl.value ?? null,
+    });
+
     const stockSignalHistoryArr: StockSignalHistoryEntry[] = nseUniverse.map((w) => {
       const h = stockSignalHistory.get(w.key);
       return {
@@ -1996,12 +2015,16 @@ async function main() {
         const tpPoints = predRefPx * (dynTpPct / 100);
         const slPoints = predRefPx * (dynSlPct / 100);
 
-        // Confidence: base from TF scoring + OBI boost + PCR boost
+        // Confidence: base from TF scoring + OBI boost + PCR boost + AMT boost
         let conf = Math.max(Number(s5.confidence ?? 0), Number(s15.confidence ?? 0));
         if (predObiSig === (dir === "LONG" ? "BUY" : "SELL")) conf = Math.min(0.95, conf * 1.08);
         if (predPcr !== null) {
           if ((dir === "LONG" && predPcr >= 1.1) || (dir === "SHORT" && predPcr <= 0.9))
             conf = Math.min(0.95, conf * 1.05);
+        }
+        // AMT composite agrees with direction → extra confidence boost
+        if (amtSignals.compositeSignal === (dir === "LONG" ? "BULL" : "BEAR")) {
+          conf = Math.min(0.95, conf * (1 + amtSignals.compositeScore * 0.04));
         }
 
         const entry: PredictionEntry = {
@@ -2060,6 +2083,7 @@ async function main() {
       rms: { maxDailyLoss: maxDailyLossVal, maxRiskPerTrade: maxRiskPerTradeVal },
       options: optionsSuggestion,
       orderFlow: obiTracker.snapshot(),
+      auctionMarket: amtSignals,
       news: news
         ? {
             level: effectiveNewsRisk,
@@ -2304,6 +2328,7 @@ async function main() {
     const currentSession = String(snap.lifecycle?.session ?? "");
     if (currentSession === "PRE_OPEN" && lastReportSession === "CLOSED") {
       obiTracker.resetDay();
+      amtTracker.resetDay();
     }
 
     // Generate daily Markdown report when session transitions to CLOSED.
