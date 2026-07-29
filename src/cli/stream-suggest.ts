@@ -8,6 +8,8 @@ import { pickNearestWeeklyNiftyOptionExpiry } from "../analysis/defaults";
 import { sma, ema, dema, wma, rsi, macd, momentum, tsi, atr, bollingerBands, stdDev, historicalVolatility, linearRegressionCurve, pvt, vwap, asi, relativeVolume, volumeOscillator, candlePattern, trendStructure, supportLevel, resistanceLevel } from "../analysis/indicators";
 import { OBITracker } from "../analysis/orderFlow";
 import { AMTTracker, type AMTSnapshot } from "../analysis/auctionMarket";
+import { fetchGlobalCues, type GlobalCuesSnapshot } from "../analysis/globalCues";
+import { fetchFiiDii, type FiiDiiSnapshot } from "../news/fiiDii";
 import { CandleAggregator } from "../live/candleAggregator";
 import { getInstruments } from "../instruments/instrumentsCache";
 import { createKiteTicker } from "../kite/ticker";
@@ -928,6 +930,28 @@ async function main() {
   let news: NewsContext | null = null;
   let newsLastFetchMs = 0;
 
+  let globalCues: GlobalCuesSnapshot | null = null;
+  let globalCuesLastFetchMs = 0;
+  const GLOBAL_CUES_TTL_MS = 4 * 60 * 60_000; // refresh every 4 hours
+
+  let fiiDii: FiiDiiSnapshot | null = null;
+  let fiiDiiLastFetchMs = 0;
+  const FIIDII_TTL_MS = 6 * 60 * 60_000; // refresh every 6 hours (data is daily)
+
+  async function refreshGlobalCuesIfNeeded(): Promise<void> {
+    const now = Date.now();
+    if (globalCues && now - globalCuesLastFetchMs < GLOBAL_CUES_TTL_MS) return;
+    globalCuesLastFetchMs = now;
+    try { globalCues = await fetchGlobalCues(); } catch { /* ignore */ }
+  }
+
+  async function refreshFiiDiiIfNeeded(): Promise<void> {
+    const now = Date.now();
+    if (fiiDii && now - fiiDiiLastFetchMs < FIIDII_TTL_MS) return;
+    fiiDiiLastFetchMs = now;
+    try { fiiDii = await fetchFiiDii(); } catch { /* ignore */ }
+  }
+
   async function refreshNewsIfNeeded(): Promise<void> {
     if (newsMode === "off") return;
     if (manualNewsRisk && newsMode === "manual") return;
@@ -1096,6 +1120,8 @@ async function main() {
     options: any;
     orderFlow: any;
     auctionMarket: AMTSnapshot;
+    globalCues: GlobalCuesSnapshot | null;
+    fiiDii: FiiDiiSnapshot | null;
     news: any;
     notes: string[];
   } {
@@ -2138,6 +2164,16 @@ async function main() {
           if (!chaseOk) continue;
         }
 
+        // Gate 13: Global bias — only in MORNING_MOMENTUM; blocks if overnight cues strongly contradict
+        // In midday/afternoon, domestic flows dominate so global cues are not a hard gate.
+        // FII/DII is 1-day lagged so it only adjusts confidence, never blocks.
+        if (lifecycle.session === "MORNING_MOMENTUM" && globalCues?.biasStrong) {
+          const globalOk = dir === "LONG"
+            ? globalCues.bias !== "BEARISH"
+            : globalCues.bias !== "BULLISH";
+          if (!globalOk) continue;
+        }
+
         // All gates passed — fire prediction
         if (predRefPx === null || !Number.isFinite(predRefPx)) continue;
         const bestTfSrc = [s15, s5, s1].find((s) => s.recommendation === dir);
@@ -2163,6 +2199,16 @@ async function main() {
         // AMT composite agrees with direction → extra confidence boost
         if (amtSignals.compositeSignal === (dir === "LONG" ? "BULL" : "BEAR")) {
           conf = Math.min(CONF_CAP, conf * (1 + amtSignals.compositeScore * 0.04));
+        }
+        // Global cues agree → +5% confidence; contradict → -8%
+        if (globalCues && globalCues.bias !== "NEUTRAL") {
+          const globalAgrees = dir === "LONG" ? globalCues.bias === "BULLISH" : globalCues.bias === "BEARISH";
+          conf = Math.min(CONF_CAP, globalAgrees ? conf * 1.05 : conf * 0.92);
+        }
+        // FII net buying/selling → soft confidence nudge (lagged data, not a hard gate)
+        if (fiiDii && fiiDii.fiiSignal !== "NEUTRAL") {
+          const fiiAgrees = dir === "LONG" ? fiiDii.fiiSignal === "BULLISH" : fiiDii.fiiSignal === "BEARISH";
+          conf = Math.min(CONF_CAP, fiiAgrees ? conf * 1.03 : conf * 0.97);
         }
 
         const entry: PredictionEntry = {
@@ -2224,6 +2270,8 @@ async function main() {
       options: optionsSuggestion,
       orderFlow: obiTracker.snapshot(),
       auctionMarket: amtSignals,
+      globalCues,
+      fiiDii,
       news: news
         ? {
             level: effectiveNewsRisk,
@@ -2340,6 +2388,8 @@ async function main() {
     }
 
     await refreshNewsIfNeeded();
+    await refreshGlobalCuesIfNeeded();
+    await refreshFiiDiiIfNeeded();
 
     const snap = buildOutputSnapshot();
     // eslint-disable-next-line no-console
@@ -2367,10 +2417,10 @@ async function main() {
   const timer = setInterval(() => {
     if (!connected) return;
 
-    // Fire-and-forget news refresh (cached).
-    refreshNewsIfNeeded().catch(() => {
-      // ignore
-    });
+    // Fire-and-forget refreshes (all cached with TTLs).
+    refreshNewsIfNeeded().catch(() => {});
+    refreshGlobalCuesIfNeeded().catch(() => {});
+    refreshFiiDiiIfNeeded().catch(() => {});
 
     // Options: resolve/subscribe ATM options for the configured expiry.
     try {
