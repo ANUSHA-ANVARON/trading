@@ -8,15 +8,6 @@ function nowIso(): string {
   return new Date().toISOString();
 }
 
-function dirFromAction(action: string): "LONG" | "SHORT" | null {
-  const a = action.toUpperCase();
-  if (a.includes("BUY CALL")) return "LONG";
-  if (a.includes("SELL PUT")) return "LONG";
-  if (a.includes("BUY PUT")) return "SHORT";
-  if (a.includes("SELL CALL")) return "SHORT";
-  return null;
-}
-
 function safeString(x: unknown): string {
   if (x === null || x === undefined) return "";
   return typeof x === "string" ? x : JSON.stringify(x);
@@ -259,77 +250,6 @@ function toIst(iso: string): string {
   const d = new Date(iso);
   const ist = new Date(d.getTime() + 5.5 * 3600_000);
   return String(ist.getUTCHours()).padStart(2, "0") + ":" + String(ist.getUTCMinutes()).padStart(2, "0") + " IST";
-}
-
-// Renders a trade-signal alert using the shared AlgoBot template, with two
-// info boxes ("Signal Type" and "Confidence") matching the SVG template
-// layout, coloured by direction (green = LONG, red = SHORT).
-async function renderSignalCardPng(params: {
-  asof: string;
-  action: string;
-  direction: "LONG" | "SHORT" | null;
-  timeframe: string | null;
-  detailLines: string[];
-  confidence: number | null;
-  extraLines: string[];
-}): Promise<Uint8Array> {
-  const { createCanvas } = await import("@napi-rs/canvas");
-  const font = await ensureFonts();
-  const accent = params.direction === "LONG" ? "#22c55e" : params.direction === "SHORT" ? "#ef4444" : ALGOBOT_GOLD;
-
-  const W = 690;
-  const top = 270;
-  const gap = 20;
-  const box1H = 70 + params.detailLines.length * 26;
-  const box2H = 70 + params.extraLines.length * 26;
-  const H = top + box1H + gap + box2H + 90;
-
-  const canvas = createCanvas(W, H);
-  const ctx = canvas.getContext("2d");
-
-  ctx.save();
-  const sub = `Trading Alert  ·  ${params.timeframe ?? "-"}  ·  ${toIst(params.asof)}`;
-  const { lx, rx } = drawAlgobotTemplate(ctx, font, W, H, sub);
-
-  // Box 1: signal type
-  let y = top;
-  rr(ctx, lx, y, rx - lx, box1H, 10);
-  ctx.fillStyle = "#2a1515"; ctx.fill();
-  ctx.globalAlpha = 0.4; ctx.strokeStyle = ALGOBOT_GOLD; ctx.lineWidth = 1; ctx.stroke();
-  ctx.globalAlpha = 1;
-
-  ctx.fillStyle = ALGOBOT_GOLD; ctx.font = `600 14px "${font}"`;
-  ctx.fillText("SIGNAL TYPE", lx + 20, y + 30);
-
-  ctx.fillStyle = accent; ctx.font = `800 30px "${font}"`;
-  ctx.fillText(params.action.toUpperCase(), lx + 20, y + 64);
-
-  ctx.fillStyle = "#e8d4b8"; ctx.font = `500 15px "${font}"`;
-  for (let i = 0; i < params.detailLines.length; i++) {
-    ctx.fillText(params.detailLines[i], lx + 20, y + 88 + i * 26);
-  }
-
-  // Box 2: confidence
-  y = top + box1H + gap;
-  rr(ctx, lx, y, rx - lx, box2H, 10);
-  ctx.fillStyle = "#2a1515"; ctx.fill();
-  ctx.globalAlpha = 0.4; ctx.strokeStyle = ALGOBOT_GOLD; ctx.lineWidth = 1; ctx.stroke();
-  ctx.globalAlpha = 1;
-
-  ctx.fillStyle = ALGOBOT_GOLD; ctx.font = `600 14px "${font}"`;
-  ctx.fillText("CONFIDENCE", lx + 20, y + 30);
-
-  const confStr = params.confidence != null ? `${(params.confidence * 100).toFixed(0)}%` : "–";
-  ctx.fillStyle = "#e8d4b8"; ctx.font = `800 30px "${font}"`;
-  ctx.fillText(confStr, lx + 20, y + 64);
-
-  ctx.fillStyle = "#e8d4b8"; ctx.font = `500 15px "${font}"`;
-  for (let i = 0; i < params.extraLines.length; i++) {
-    ctx.fillText(params.extraLines[i], lx + 20, y + 88 + i * 26);
-  }
-
-  ctx.restore();
-  return canvas.toBuffer("image/png");
 }
 
 export type MarketCondition = "STRONG_BULLISH" | "MILDLY_BULLISH" | "STRONG_BEARISH" | "MILDLY_BEARISH" | "NEUTRAL";
@@ -749,12 +669,8 @@ export class TelegramNotifier {
   private readonly token: string | null;
   private readonly chatIds: string[];
   private readonly minIntervalMs: number;
-  private lastKey: string | null = null;
-  private lastSentAt = 0;
   private lastStockKey: string | null = null;
   private lastStockSentAt = 0;
-  private lastSpreadSentAt = 0;
-  private readonly SPREAD_MIN_MS = 25 * 60_000; // credit spreads: min 25 min between alerts
   private warnedMissing = false;
 
   // Market condition tracking — only fires on state change to STRONG_BULLISH or STRONG_BEARISH
@@ -779,91 +695,6 @@ export class TelegramNotifier {
 
   isConfigured(): boolean {
     return Boolean(this.token && this.chatIds.length);
-  }
-
-  private buildKey(s: TelegramSignalSnapshot): string {
-    const opt = s.options ?? {};
-    const sug = opt?.suggestion ?? {};
-    const decision = opt?.decision ?? {};
-
-    const action = String(decision?.action ?? "");
-    const take = Boolean(decision?.takeTrade);
-
-    if (!take || !action || sug?.style === "WAIT") return "WAIT";
-
-    if (sug?.style === "BUY") {
-      return [
-        "BUY",
-        String(sug?.action ?? ""),
-        String(sug?.instrument ?? ""),
-        String(sug?.strike ?? ""),
-        String(opt?.expiry ?? ""),
-      ].join("|");
-    }
-
-    if (sug?.style === "CREDIT_SPREAD") {
-      const sp = sug?.spread ?? {};
-      const legs = sp?.legs ?? {};
-      return [
-        "SPREAD",
-        String(sug?.action ?? ""),
-        String(legs?.sell?.instrument ?? ""),
-        String(legs?.sell?.strike ?? ""),
-        String(legs?.buy?.instrument ?? ""),
-        String(legs?.buy?.strike ?? ""),
-        String(opt?.expiry ?? ""),
-      ].join("|");
-    }
-
-    return ["OTHER", action, String(opt?.expiry ?? "")].join("|");
-  }
-
-  private formatMessage(s: TelegramSignalSnapshot): string {
-    const asof = String(s.asof ?? nowIso());
-    const opt = s.options ?? null;
-    const decision = opt?.decision ?? null;
-    const sug = opt?.suggestion ?? null;
-    const plan = opt?.tradePlan ?? null;
-
-    const tradeTf = s.tradeTimeframe ? String(s.tradeTimeframe) : null;
-
-    const action = String(decision?.action ?? "WAIT");
-    const dir = dirFromAction(action);
-
-    const lines: string[] = [];
-    lines.push(`TRADE SIGNAL (${asof})`);
-    lines.push(`TF: ${tradeTf ?? "-"} | DIR: ${dir ?? "-"} | ACTION: ${action}`);
-
-    if (sug?.style === "BUY") {
-      const inst = String(sug.instrument ?? "-");
-      const qty = typeof sug.quantity === "number" ? sug.quantity : null;
-      const entry = plan?.kind === "BUY_PREMIUM" ? plan.entryPremium : typeof sug.premium === "number" ? Number(sug.premium.toFixed(2)) : null;
-      const tgt = plan?.kind === "BUY_PREMIUM" ? plan.targetPremium : null;
-      const sl = plan?.kind === "BUY_PREMIUM" ? plan.stopPremium : null;
-
-      lines.push(`BUY: ${inst}${qty ? ` | QTY: ${qty}` : ""}`);
-      if (entry !== null) {
-        lines.push(`ENTRY: ${entry}${tgt !== null ? ` | TGT: ${tgt}` : ""}${sl !== null ? ` | SL: ${sl}` : ""}`);
-      }
-    } else if (sug?.style === "CREDIT_SPREAD") {
-      const sp = sug.spread;
-      const sell = sp?.legs?.sell;
-      const buy = sp?.legs?.buy;
-      const qty = typeof sell?.quantity === "number" ? sell.quantity : null;
-      const credit = typeof sp?.netCredit === "number" ? Number(sp.netCredit.toFixed(2)) : null;
-      const tBuyback = plan?.kind === "CREDIT_SPREAD" ? plan.targetBuyback : null;
-      const slBuyback = plan?.kind === "CREDIT_SPREAD" ? plan.stopBuyback : null;
-
-      if (sell && buy) {
-        lines.push(`SELL: ${sell.instrument} ${sell.strike} @ ${sell.premium ?? "-"}`);
-        lines.push(`BUY:  ${buy.instrument} ${buy.strike} @ ${buy.premium ?? "-"}${qty ? ` | QTY: ${qty}` : ""}`);
-      }
-      if (credit !== null) {
-        lines.push(`CREDIT: ${credit}${tBuyback !== null ? ` | TGT BUYBACK: ${tBuyback}` : ""}${slBuyback !== null ? ` | SL BUYBACK: ${slBuyback}` : ""}`);
-      }
-    }
-
-    return lines.join("\n");
   }
 
   private buildStockKey(s: TelegramSignalSnapshot): string {
@@ -929,140 +760,8 @@ export class TelegramNotifier {
     }
   }
 
-  private buildSignalCardData(s: TelegramSignalSnapshot): {
-    asof: string;
-    action: string;
-    direction: "LONG" | "SHORT" | null;
-    timeframe: string | null;
-    detailLines: string[];
-    confidence: number | null;
-    extraLines: string[];
-  } {
-    const asof = String(s.asof ?? nowIso());
-    const opt = s.options ?? null;
-    const decision = opt?.decision ?? null;
-    const sug = opt?.suggestion ?? null;
-    const plan = opt?.tradePlan ?? null;
-    const tradeTf = s.tradeTimeframe ? String(s.tradeTimeframe) : null;
-    const action = String(decision?.action ?? "WAIT");
-    const dir = dirFromAction(action);
-
-    const detailLines: string[] = [];
-    if (sug?.style === "BUY") {
-      const inst = String(sug.instrument ?? "-");
-      const entry = plan?.kind === "BUY_PREMIUM" ? plan.entryPremium : typeof sug.premium === "number" ? Number(sug.premium.toFixed(2)) : null;
-      const tgt = plan?.kind === "BUY_PREMIUM" ? plan.targetPremium : null;
-      const sl = plan?.kind === "BUY_PREMIUM" ? plan.stopPremium : null;
-      detailLines.push(inst);
-      if (entry !== null) detailLines.push(`Entry: ${entry}   Target: ${tgt ?? "-"}   Stop: ${sl ?? "-"}`);
-      if (sug.maxLoss != null) detailLines.push(`Max Loss: ₹${Number(sug.maxLoss).toFixed(0)}`);
-    } else if (sug?.style === "CREDIT_SPREAD") {
-      const sp = sug.spread;
-      const sell = sp?.legs?.sell;
-      const buy = sp?.legs?.buy;
-      const credit = sp?.netCredit != null ? Number(sp.netCredit.toFixed(2)) : null;
-      const tBuyback = plan?.kind === "CREDIT_SPREAD" ? plan.targetBuyback : null;
-      const slBuyback = plan?.kind === "CREDIT_SPREAD" ? plan.stopBuyback : null;
-      if (sell && buy) {
-        detailLines.push(`Sell: ${sell.instrument} @${sell.premium ?? "-"}`);
-        detailLines.push(`Buy: ${buy.instrument} @${buy.premium ?? "-"}`);
-      }
-      if (credit !== null) detailLines.push(`Credit: ${credit}   Target: ${tBuyback ?? "-"}   Stop: ${slBuyback ?? "-"}`);
-      if (sp?.maxLoss != null) detailLines.push(`Max Loss: ₹${Number(sp.maxLoss).toFixed(0)}`);
-    }
-
-    const extraLines: string[] = [];
-
-    // Top pivot levels relative to current price
-    const piv = s.pivotLevels;
-    if (piv) {
-      const near = ["r2","r1","cpr","s1","s2"].map((k) => piv[k]).filter(Boolean);
-      const pivLine = near.map((lv: any) => `${lv.name}:${lv.value.toFixed(0)}(${lv.status})`).join("  ");
-      if (pivLine) extraLines.push(`Levels: ${pivLine}`);
-    }
-
-    // RMS context
-    const rms = s.rms;
-    if (rms?.maxDailyLoss != null) extraLines.push(`Daily Loss Cap: ₹${rms.maxDailyLoss.toLocaleString()}`);
-
-    const conf = s.suggestion?.confidence;
-
-    return {
-      asof,
-      action,
-      direction: dir,
-      timeframe: tradeTf,
-      detailLines,
-      confidence: conf != null ? Number(conf) : null,
-      extraLines,
-    };
-  }
-
-  async maybeSendSignal(snapshot: TelegramSignalSnapshot): Promise<void> {
-    const key = this.buildKey(snapshot);
-
-    if (!this.isConfigured()) {
-      if (!this.warnedMissing) {
-        this.warnedMissing = true;
-        // eslint-disable-next-line no-console
-        console.error(
-          "Telegram notifier enabled but not configured. Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in .env",
-        );
-      }
-      return;
-    }
-
-    if (key === "WAIT") return;
-
-    // Only send trade signals during strong market conditions
-    const sigLc = snapshot.lifecycle;
-    const sigCondition = sigLc ? lifecycleToCondition(String(sigLc.state ?? "")) : "NEUTRAL";
-    if (sigCondition !== "STRONG_BULLISH" && sigCondition !== "STRONG_BEARISH") return;
-
-    const now = Date.now();
-    if (this.lastKey === key) return;
-    if (now - this.lastSentAt < this.minIntervalMs) return;
-
-    // Credit spreads: enforce a longer minimum interval — strikes shift frequently
-    // with ATM oscillation and would otherwise fire on every small NIFTY move
-    if (key.startsWith("SPREAD") && now - this.lastSpreadSentAt < this.SPREAD_MIN_MS) return;
-
-    const data = this.buildSignalCardData(snapshot);
-
-    try {
-      const png = await renderSignalCardPng(data);
-      for (const chatId of this.chatIds) {
-        const result = await sendTelegramPhoto({
-          token: this.token as string,
-          chatId,
-          photoPng: png,
-          filename: "signal.png",
-          caption: `${data.action}${data.timeframe ? `  ·  ${data.timeframe}` : ""}`,
-        });
-        if (!result.ok) {
-          // eslint-disable-next-line no-console
-          console.error(`${result.error} (chatId=${chatId})`);
-        }
-      }
-    } catch {
-      // Fallback to plain text if canvas rendering fails.
-      const text = this.formatMessage(snapshot);
-      for (const chatId of this.chatIds) {
-        const result = await sendTelegramMessage({ token: this.token as string, chatId, text });
-        if (!result.ok) {
-          // eslint-disable-next-line no-console
-          console.error(result.error);
-          if (result.responseBody) {
-            // eslint-disable-next-line no-console
-            console.error(typeof result.responseBody === "string" ? result.responseBody : JSON.stringify(result.responseBody, null, 2));
-          }
-        }
-      }
-    }
-
-    this.lastKey = key;
-    this.lastSentAt = now;
-    if (key.startsWith("SPREAD")) this.lastSpreadSentAt = now;
+  async maybeSendSignal(_snapshot: TelegramSignalSnapshot): Promise<void> {
+    // Trading Alert cards (BUY CALL/PUT, SELL PUT/CALL SPREAD) are disabled.
   }
 
   async maybeSendStockFlow(snapshot: TelegramSignalSnapshot): Promise<void> {
