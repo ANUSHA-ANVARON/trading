@@ -982,10 +982,10 @@ async function main() {
     { id: "G0_SESSION",      name: "Session Window",     description: "Only MORNING_MOMENTUM, MIDDAY_GRIND, AFTERNOON_TRANSITION" },
     { id: "G1_LIFECYCLE",    name: "Lifecycle State",    description: "CLEAN_BULLISH_FLOW or CE_EDGE (LONG) / CLEAN_BEARISH_FLOW or PE_EDGE (SHORT)" },
     { id: "G2_TF_AGREE",     name: "TF Agreement",       description: "2+ of 3 timeframes (1m/5m/15m) must agree" },
-    { id: "G3_RSI",          name: "RSI Alignment",      description: "RSI 5m ≥53 & 15m ≥50 (LONG) / ≤47 & ≤50 (SHORT)" },
+    { id: "G3_RSI",          name: "RSI Alignment",      description: "RSI 5m ≥50 & 15m ≥48 (LONG) / ≤50 & ≤52 (SHORT)" },
     { id: "G4_BB",           name: "BB %B Band",         description: "Price in mid-band (0.45–0.88 LONG / 0.12–0.55 SHORT)" },
     { id: "G5_BREADTH",      name: "Breadth Support",    description: "Breadth move > ±0.05% and Adv/Dec ratio confirms" },
-    { id: "G6_PCR",          name: "PCR Filter",         description: "PCR ≤1.15 (LONG) / ≥0.85 (SHORT)" },
+    { id: "G6_PCR",          name: "PCR Filter",         description: "PCR ≤1.30 (LONG) / ≥0.70 (SHORT)" },
     { id: "G7_IV_SKEW",      name: "IV Skew",            description: "Put IV - Call IV skew not strongly against direction" },
     { id: "G8_RSI_EXTEND",   name: "RSI Not Extended",   description: "RSI not in deep overbought/oversold (≤68/≥32 on 5m)" },
     { id: "G9_VWAP",         name: "VWAP Side",          description: "Price above VWAP (LONG) / below VWAP (SHORT)" },
@@ -2330,10 +2330,10 @@ async function main() {
         const tfAgree = tfRecs.filter((r) => r === dir).length;
         if (tfAgree < 2) { bumpBlock("G2_TF_AGREE", dir); continue; }
 
-        // Gate 3: RSI confirms on BOTH 5m and 15m
+        // Gate 3: RSI confirms on BOTH 5m and 15m (midline cross, not extreme entry)
         const rsiOk = dir === "LONG"
-          ? (rsi5 !== null && rsi5 >= 53 && rsi15 !== null && rsi15 >= 50)
-          : (rsi5 !== null && rsi5 <= 47 && rsi15 !== null && rsi15 <= 50);
+          ? (rsi5 !== null && rsi5 >= 50 && rsi15 !== null && rsi15 >= 48)
+          : (rsi5 !== null && rsi5 <= 50 && rsi15 !== null && rsi15 <= 52);
         if (!rsiOk) { bumpBlock("G3_RSI", dir); continue; }
 
         // Gate 4: BB confirms on 5m or 15m (price not at extreme, in right half of band)
@@ -2352,7 +2352,7 @@ async function main() {
         if (predPcr !== null) {
           // PCR < 0.85 = heavy call buying = bullish sentiment → don't SHORT
           // PCR > 1.15 = heavy put buying = bearish sentiment → don't LONG
-          const pcrOk = dir === "LONG" ? predPcr <= 1.15 : predPcr >= 0.85;
+          const pcrOk = dir === "LONG" ? predPcr <= 1.30 : predPcr >= 0.70;
           if (!pcrOk) { bumpBlock("G6_PCR", dir); continue; }
         }
 

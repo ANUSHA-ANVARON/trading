@@ -137,10 +137,10 @@ export function computeLifecycle(input: SignalInput): LifecycleOutput {
   // ── Flow state ───────────────────────────────────────────────────
   const isBullishTF = longCount >= 2 && conflicting === 0;
   const isBearishTF = shortCount >= 2 && conflicting === 0;
-  const rsiOkLong = rsi1 != null && rsi1 >= 55 && (rsi5 == null || rsi5 >= 50);
-  const rsiOkShort = rsi1 != null && rsi1 <= 45 && (rsi5 == null || rsi5 <= 50);
-  const breadthBull = input.weightedMovePct > 0.15 && advDec > 1.2;
-  const breadthBear = input.weightedMovePct < -0.15 && advDec < 0.83;
+  const rsiOkLong = rsi1 != null && rsi1 >= 52 && (rsi5 == null || rsi5 >= 48);
+  const rsiOkShort = rsi1 != null && rsi1 <= 48 && (rsi5 == null || rsi5 <= 52);
+  const breadthBull = input.weightedMovePct > 0.08 && advDec > 1.1;
+  const breadthBear = input.weightedMovePct < -0.08 && advDec < 0.91;
 
   let state: FlowState;
 
