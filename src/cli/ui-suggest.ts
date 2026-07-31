@@ -500,6 +500,33 @@ tr:hover td{background:rgba(232,236,246,.025)}
   </div>
 </div>
 
+<!-- RULE GATES -->
+<div class="card" id="rulesCard">
+  <div class="ctog" id="rulesTog">
+    <div class="ct" style="margin:0">Rule Gates <span class="hint">15 confluence filters — block count = times this gate stopped a potential trade today</span></div>
+    <span class="chev">▼</span>
+  </div>
+  <div class="cbody cls" id="rulesBody" style="max-height:0">
+    <div style="overflow:auto">
+      <table class="mono" style="width:100%;border-collapse:collapse;font-size:12px">
+        <thead style="position:sticky;top:0;background:var(--bg2);z-index:1">
+          <tr>
+            <th style="text-align:left;padding:4px 8px">Gate</th>
+            <th style="text-align:left;padding:4px 8px">Threshold</th>
+            <th style="padding:4px 8px">Blocked ▲</th>
+            <th style="padding:4px 8px">Blocked ▼</th>
+            <th style="padding:4px 8px">Passed ▲</th>
+            <th style="padding:4px 8px">Passed ▼</th>
+            <th style="padding:4px 8px">Pressure</th>
+          </tr>
+        </thead>
+        <tbody id="rulesBody2"></tbody>
+      </table>
+    </div>
+    <div id="rulesNote" class="note">Waiting for gate data…</div>
+  </div>
+</div>
+
 <!-- SIGNAL HISTORY -->
 <div class="card">
   <div class="ctog open" id="sigTog">
@@ -574,7 +601,7 @@ function coll(tId,bId){
     else{b.classList.add('cls');b.style.maxHeight='0';}
   });
 }
-coll('sigTog','sigBody'); coll('logTog','logBody'); coll('rsnTog','rsnBody'); coll('lcHistTog','lcHistBody'); coll('predTog','predBody');
+coll('sigTog','sigBody'); coll('logTog','logBody'); coll('rsnTog','rsnBody'); coll('lcHistTog','lcHistBody'); coll('predTog','predBody'); coll('rulesTog','rulesBody');
 
 // ── Utils ──────────────────────────────────────────────────────────
 function fmt(n,d){if(n==null||!isFinite(n))return '-';return Number(n).toFixed(d!=null?d:2);}
@@ -744,6 +771,34 @@ function renderLifecycle(obj){
         tb.appendChild(tr);
       }
     } else { if(hn)hn.textContent='Waiting for lifecycle history…'; }
+  }
+}
+
+// ── Rule Gates ─────────────────────────────────────────────────────
+function renderRuleGates(gates){
+  var tbody=e('rulesBody2'),note=e('rulesNote');
+  if(!tbody)return;
+  if(!gates||!gates.length){if(note)note.textContent='Waiting for gate data…';return;}
+  if(note)note.textContent='';
+  tbody.innerHTML='';
+  for(var i=0;i<gates.length;i++){
+    var g=gates[i];
+    var totalBlock=(g.blockLong||0)+(g.blockShort||0);
+    var totalPass=(g.passLong||0)+(g.passShort||0);
+    var totalAttempts=totalBlock+totalPass;
+    // pressure = % of attempts this gate blocked (higher = tighter filter)
+    var pressure=totalAttempts>0?Math.round(totalBlock/totalAttempts*100):null;
+    var pressureCol=pressure===null?'var(--m)':pressure>=70?'var(--r2)':pressure>=40?'var(--a2)':'var(--g2)';
+    var tr=document.createElement('tr');
+    tr.innerHTML=
+      '<td style="padding:4px 8px;font-weight:600">'+String(g.name||g.id)+'</td>'+
+      '<td style="padding:4px 8px;font-size:10px;color:var(--m);max-width:260px;white-space:normal;line-height:1.4">'+String(g.description||'')+'</td>'+
+      '<td style="padding:4px 8px;text-align:center;color:var(--r2)">'+(g.blockLong||0)+'</td>'+
+      '<td style="padding:4px 8px;text-align:center;color:var(--r2)">'+(g.blockShort||0)+'</td>'+
+      '<td style="padding:4px 8px;text-align:center;color:var(--g2)">'+(g.passLong||0)+'</td>'+
+      '<td style="padding:4px 8px;text-align:center;color:var(--g2)">'+(g.passShort||0)+'</td>'+
+      '<td style="padding:4px 8px;text-align:center;font-weight:700;color:'+pressureCol+'">'+(pressure!==null?pressure+'%':'–')+'</td>';
+    tbody.appendChild(tr);
   }
 }
 
@@ -1315,6 +1370,7 @@ function applyUpdate(obj){
   renderLifecycle(obj);
   renderMarketThesis(obj.marketThesis||null);
   renderDomesticCues(obj.domesticCues||null);
+  renderRuleGates(obj.ruleGates||[]);
   var score=calcScore(obj);updateGauge(score);updateScoreFacts(obj,score);
 
 

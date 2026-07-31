@@ -26,7 +26,7 @@ import { TelegramNotifier } from "../notify/telegram";
 import { computePivotLevels, type PivotLevelsOutput } from "../analysis/pivotLevels";
 import { computeLifecycle, type LifecycleOutput } from "../analysis/lifecycle";
 import { env } from "../config/env";
-import { persistPrediction, generateDailyReport, toIstDate, computeLabelStats } from "../storage/predictionLog";
+import { persistPrediction, generateDailyReport, toIstDate, computeLabelStats, type LabelStats } from "../storage/predictionLog";
 
 type WithToken = { key: string; weight: number; token: number };
 
@@ -976,6 +976,40 @@ async function main() {
   // Adaptive kill switch — pause predictions when strategy is losing
   let killSwitchUntil = 0; // timestamp; 0 = not paused
 
+  // Gate block/pass counters — reset each market day, included in snapshot
+  type GateCount = { long: number; short: number };
+  const GATE_DEFS: Array<{ id: string; name: string; description: string }> = [
+    { id: "G0_SESSION",      name: "Session Window",     description: "Only MORNING_MOMENTUM, MIDDAY_GRIND, AFTERNOON_TRANSITION" },
+    { id: "G1_LIFECYCLE",    name: "Lifecycle State",    description: "CLEAN_BULLISH_FLOW or CE_EDGE (LONG) / CLEAN_BEARISH_FLOW or PE_EDGE (SHORT)" },
+    { id: "G2_TF_AGREE",     name: "TF Agreement",       description: "2+ of 3 timeframes (1m/5m/15m) must agree" },
+    { id: "G3_RSI",          name: "RSI Alignment",      description: "RSI 5m ≥53 & 15m ≥50 (LONG) / ≤47 & ≤50 (SHORT)" },
+    { id: "G4_BB",           name: "BB %B Band",         description: "Price in mid-band (0.45–0.88 LONG / 0.12–0.55 SHORT)" },
+    { id: "G5_BREADTH",      name: "Breadth Support",    description: "Breadth move > ±0.05% and Adv/Dec ratio confirms" },
+    { id: "G6_PCR",          name: "PCR Filter",         description: "PCR ≤1.15 (LONG) / ≥0.85 (SHORT)" },
+    { id: "G7_IV_SKEW",      name: "IV Skew",            description: "Put IV - Call IV skew not strongly against direction" },
+    { id: "G8_RSI_EXTEND",   name: "RSI Not Extended",   description: "RSI not in deep overbought/oversold (≤68/≥32 on 5m)" },
+    { id: "G9_VWAP",         name: "VWAP Side",          description: "Price above VWAP (LONG) / below VWAP (SHORT)" },
+    { id: "G10_TREND",       name: "Trend Structure",    description: "15m must show UPTREND (LONG) / DOWNTREND (SHORT), not RANGING" },
+    { id: "G11_OR_BIAS",     name: "Opening Range Bias", description: "Price above OR High (LONG) / below OR Low (SHORT)" },
+    { id: "G12_CHASE",       name: "No Chase",           description: "Price ≤0.30% extended from 5m EMA9" },
+    { id: "G13_GLOBAL",      name: "Global Cues",        description: "Morning only: global overnight cues not strongly opposing" },
+    { id: "G14_DOMESTIC",    name: "Domestic Alignment", description: "BANKNIFTY+SENSEX not both strongly opposing direction" },
+  ];
+  const gateBlockCounts = new Map<string, GateCount>(
+    GATE_DEFS.map((g) => [g.id, { long: 0, short: 0 }])
+  );
+  const gatePassCounts  = new Map<string, GateCount>(
+    GATE_DEFS.map((g) => [g.id, { long: 0, short: 0 }])
+  );
+  let gateStatsDate = ""; // reset daily
+  function bumpBlock(id: string, dir: "LONG" | "SHORT") {
+    const c = gateBlockCounts.get(id)!;
+    if (dir === "LONG") c.long++; else c.short++;
+  }
+  function bumpAllPass(dir: "LONG" | "SHORT") {
+    for (const [, c] of gatePassCounts) { if (dir === "LONG") c.long++; else c.short++; }
+  }
+
   // Restore today's predictions from persistent storage so a server restart
   // doesn't wipe the in-memory log visible in the UI.
   {
@@ -1281,6 +1315,10 @@ async function main() {
     fiiDii: FiiDiiSnapshot | null;
     news: any;
     notes: string[];
+    marketThesis: MarketThesis | null;
+    domesticCues: DomesticCuesSnapshot | null;
+    perLabelStats: LabelStats[];
+    ruleGates: Array<{ id: string; name: string; description: string; blockLong: number; blockShort: number; passLong: number; passShort: number }>;
   } {
     const breadth = analyzeBreadthFromTicks(nseUniverse as any, latest as any);
 
@@ -2257,6 +2295,14 @@ async function main() {
         }, 0) / totalVol;
       })();
 
+      // Daily reset of gate counters
+      const todayStr = new Date().toISOString().slice(0, 10);
+      if (gateStatsDate !== todayStr) {
+        gateStatsDate = todayStr;
+        for (const c of gateBlockCounts.values()) { c.long = 0; c.short = 0; }
+        for (const c of gatePassCounts.values())  { c.long = 0; c.short = 0; }
+      }
+
       for (const dir of ["LONG", "SHORT"] as const) {
         // Kill switch active → skip
         if (nowMs < killSwitchUntil) continue;
@@ -2266,44 +2312,48 @@ async function main() {
         // are too noisy for new entries — IV collapses, operators unwind positions,
         // indicators whipsaw. Only trade MORNING_MOMENTUM, MIDDAY_GRIND, AFTERNOON_TRANSITION.
         const blockedSessions = ["CLOSED", "OPENING_RANGE", "LATE_TRANSITION_CAUTION", "POST_3PM_REDUCED_RISK"];
-        if (blockedSessions.includes(lifecycle.session)) continue;
+        if (blockedSessions.includes(lifecycle.session)) { bumpBlock("G0_SESSION", dir); continue; }
 
         const lastFired = dir === "LONG" ? lastPredLong : lastPredShort;
         if (nowMs - lastFired < PRED_DEBOUNCE_MS) continue;
 
-        // Gate 1: lifecycle must be in a strong state only (CE_EDGE/PE_EDGE excluded)
-        const validStates = dir === "LONG" ? ["CLEAN_BULLISH_FLOW"] : ["CLEAN_BEARISH_FLOW"];
-        if (!validStates.includes(lifecycle.state)) continue;
+        // Gate 1: lifecycle must show directional flow (CLEAN or EDGE states)
+        // CE_EDGE/PE_EDGE are "building momentum" states — valid entries, not weak signals.
+        const validStates = dir === "LONG"
+          ? ["CLEAN_BULLISH_FLOW", "CE_EDGE"]
+          : ["CLEAN_BEARISH_FLOW", "PE_EDGE"];
+        if (!validStates.includes(lifecycle.state)) { bumpBlock("G1_LIFECYCLE", dir); continue; }
 
-        // Gate 2: all 3 TFs must agree (raised from 2/3 to reduce false signals)
+        // Gate 2: 2+ of 3 TFs must agree — lifecycle already ensures this for CLEAN states,
+        // but CE_EDGE/PE_EDGE may have only 1 TF aligned so we still enforce 2/3 here.
         const tfRecs = [s1.recommendation, s5.recommendation, s15.recommendation];
         const tfAgree = tfRecs.filter((r) => r === dir).length;
-        if (tfAgree < 3) continue;
+        if (tfAgree < 2) { bumpBlock("G2_TF_AGREE", dir); continue; }
 
         // Gate 3: RSI confirms on BOTH 5m and 15m
         const rsiOk = dir === "LONG"
           ? (rsi5 !== null && rsi5 >= 53 && rsi15 !== null && rsi15 >= 50)
           : (rsi5 !== null && rsi5 <= 47 && rsi15 !== null && rsi15 <= 50);
-        if (!rsiOk) continue;
+        if (!rsiOk) { bumpBlock("G3_RSI", dir); continue; }
 
         // Gate 4: BB confirms on 5m or 15m (price not at extreme, in right half of band)
         const bbOk = dir === "LONG"
           ? ((bb5 && bb5.pctB > 0.45 && bb5.pctB < 0.88) || (bb15 && bb15.pctB > 0.45 && bb15.pctB < 0.88))
           : ((bb5 && bb5.pctB < 0.55 && bb5.pctB > 0.12) || (bb15 && bb15.pctB < 0.55 && bb15.pctB > 0.12));
-        if (!bbOk) continue;
+        if (!bbOk) { bumpBlock("G4_BB", dir); continue; }
 
         // Gate 5: breadth supports
         const breadthOk = dir === "LONG"
           ? ((breadth.weighted_move_pct ?? 0) > 0.05 && advDecRatio > 1.0)
           : ((breadth.weighted_move_pct ?? 0) < -0.05 && advDecRatio < 1.0);
-        if (!breadthOk) continue;
+        if (!breadthOk) { bumpBlock("G5_BREADTH", dir); continue; }
 
         // Gate 6: PCR not strongly against direction (skip if no data)
         if (predPcr !== null) {
           // PCR < 0.85 = heavy call buying = bullish sentiment → don't SHORT
           // PCR > 1.15 = heavy put buying = bearish sentiment → don't LONG
           const pcrOk = dir === "LONG" ? predPcr <= 1.15 : predPcr >= 0.85;
-          if (!pcrOk) continue;
+          if (!pcrOk) { bumpBlock("G6_PCR", dir); continue; }
         }
 
         // Gate 7: IV skew not strongly against direction (skip if no IV data)
@@ -2311,7 +2361,7 @@ async function main() {
           // Positive skew (put IV > call IV) = market pricing downside risk = bearish tilt
           const skew = predPeIv - predCeIv;
           const skewOk = dir === "LONG" ? skew < 0.08 : skew > -0.08;
-          if (!skewOk) continue;
+          if (!skewOk) { bumpBlock("G7_IV_SKEW", dir); continue; }
         }
 
         // Gate 8: RSI not already overextended — entering on exhaustion = stop hit
@@ -2319,22 +2369,22 @@ async function main() {
         const rsiExtendedOk = dir === "LONG"
           ? (rsi5 === null || rsi5 <= 68) && (rsi15 === null || rsi15 <= 65)
           : (rsi5 === null || rsi5 >= 32) && (rsi15 === null || rsi15 >= 35);
-        if (!rsiExtendedOk) continue;
+        if (!rsiExtendedOk) { bumpBlock("G8_RSI_EXTEND", dir); continue; }
 
         // Gate 9: VWAP bias — price must be on the correct side of intraday VWAP
         // Institutions use VWAP as the primary benchmark; fading VWAP = fighting the flow
         if (predVwap !== null && predRefPx !== null) {
           const vwapOk = dir === "LONG" ? predRefPx > predVwap : predRefPx < predVwap;
-          if (!vwapOk) continue;
+          if (!vwapOk) { bumpBlock("G9_VWAP", dir); continue; }
         }
 
         // Gate 10: Market structure — 15m must show a clear trend, not RANGING
         // RANGING markets produce the most false signals (SMA cross whipsaws)
         const trendStr15 = s15.signals?.trendStructure ?? null;
-        if (trendStr15 === "RANGING") continue;
+        if (trendStr15 === "RANGING") { bumpBlock("G10_TREND", dir); continue; }
         if (trendStr15 !== null) {
           const structOk = dir === "LONG" ? trendStr15 === "UPTREND" : trendStr15 === "DOWNTREND";
-          if (!structOk) continue;
+          if (!structOk) { bumpBlock("G10_TREND", dir); continue; }
         }
 
         // Gate 11: Opening Range bias — only trade in the direction of the OR breakout
@@ -2342,7 +2392,7 @@ async function main() {
         // If price is still inside the OR, the day's direction is not established yet
         if (orHigh !== null && orLow !== null && predRefPx !== null) {
           const orBiasOk = dir === "LONG" ? predRefPx > orHigh : predRefPx < orLow;
-          if (!orBiasOk) continue;
+          if (!orBiasOk) { bumpBlock("G11_OR_BIAS", dir); continue; }
         }
 
         // Gate 12: Don't chase — if price is already >0.3% extended from 5m EMA9,
@@ -2351,7 +2401,7 @@ async function main() {
         if (ema9_5m !== null && predRefPx !== null && ema9_5m > 0) {
           const distPct = ((predRefPx - ema9_5m) / ema9_5m) * 100;
           const chaseOk = dir === "LONG" ? distPct <= 0.30 : distPct >= -0.30;
-          if (!chaseOk) continue;
+          if (!chaseOk) { bumpBlock("G12_CHASE", dir); continue; }
         }
 
         // Gate 13: Global bias — only in MORNING_MOMENTUM; blocks if overnight cues strongly contradict
@@ -2361,7 +2411,7 @@ async function main() {
           const globalOk = dir === "LONG"
             ? globalCues.bias !== "BEARISH"
             : globalCues.bias !== "BULLISH";
-          if (!globalOk) continue;
+          if (!globalOk) { bumpBlock("G13_GLOBAL", dir); continue; }
         }
 
         // Gate 14: Domestic index alignment (BANKNIFTY + SENSEX)
@@ -2371,10 +2421,11 @@ async function main() {
           const domesticContradicts = dir === "LONG"
             ? domesticCues.biasScore <= -2
             : domesticCues.biasScore >= 2;
-          if (domesticContradicts) continue;
+          if (domesticContradicts) { bumpBlock("G14_DOMESTIC", dir); continue; }
         }
 
-        // All gates passed — fire prediction
+        // All gates passed — record pass counts and fire prediction
+        bumpAllPass(dir);
         if (predRefPx === null || !Number.isFinite(predRefPx)) continue;
         const bestTfSrc = [s15, s5, s1].find((s) => s.recommendation === dir);
         const tfLabel = (bestTfSrc?.timeframe ?? "5m") as "1m" | "5m" | "15m";
@@ -2541,6 +2592,15 @@ async function main() {
         "news risk is derived from GDELT + official feeds (or can be forced with --newsRisk)",
         "engine is analysis-only; paper trade before live",
       ],
+      ruleGates: GATE_DEFS.map((g) => ({
+        id: g.id,
+        name: g.name,
+        description: g.description,
+        blockLong:  gateBlockCounts.get(g.id)?.long  ?? 0,
+        blockShort: gateBlockCounts.get(g.id)?.short ?? 0,
+        passLong:   gatePassCounts.get(g.id)?.long   ?? 0,
+        passShort:  gatePassCounts.get(g.id)?.short  ?? 0,
+      })),
     };
   }
 
