@@ -33,6 +33,21 @@ export type PredictionLogEntry = {
   outcomePrice: number | null;
   outcomeAt: string | null;
   pnlPoints: number | null;
+  // Extended fields (optional for backward-compat with old stored entries)
+  setupLabel?: string;
+  mfePct?: number | null;
+  mfeAt?: string | null;
+  lotSizeRec?: "PERFECT" | "GOOD" | "SMALL";
+  partialExits?: Array<{ triggerPct: number; exitPct: number; priceLevel: number }>;
+};
+
+export type LabelStats = {
+  label: string;
+  total: number;
+  wins: number;
+  losses: number;
+  winRate: number | null;
+  netPnl: number;
 };
 
 export function toIstDate(iso: string): string {
@@ -201,6 +216,32 @@ export async function fetchPeriodStats(predictionsDir: string): Promise<{ monthl
   };
 }
 
+// Compute per-setup-label win rate stats from an in-memory prediction log.
+export function computeLabelStats(entries: PredictionLogEntry[]): LabelStats[] {
+  const map = new Map<string, PredictionLogEntry[]>();
+  for (const e of entries) {
+    const label = e.setupLabel ?? "UNLABELED";
+    const bucket = map.get(label) ?? [];
+    bucket.push(e);
+    map.set(label, bucket);
+  }
+  const stats: LabelStats[] = [];
+  for (const [label, rows] of map.entries()) {
+    const resolved = rows.filter((r) => r.outcome === "TARGET_HIT" || r.outcome === "STOP_HIT");
+    const wins     = resolved.filter((r) => r.outcome === "TARGET_HIT").length;
+    const losses   = resolved.filter((r) => r.outcome === "STOP_HIT").length;
+    stats.push({
+      label,
+      total: rows.length,
+      wins,
+      losses,
+      winRate: resolved.length > 0 ? +(wins / resolved.length).toFixed(3) : null,
+      netPnl: +rows.reduce((s, r) => s + (r.pnlPoints ?? 0), 0).toFixed(2),
+    });
+  }
+  return stats.sort((a, b) => b.total - a.total);
+}
+
 // Generate a Markdown report from the daily JSON log. Returns the path to the .md file.
 export async function generateDailyReport(date: string, predictionsDir: string): Promise<string> {
   const file = jsonPath(predictionsDir, date);
@@ -244,10 +285,22 @@ export async function generateDailyReport(date: string, predictionsDir: string):
   md += `| **Net P&L** | **${pnlStr(totalPnl)} pts** |\n\n`;
 
   md += `## Predictions\n\n`;
-  md += `| Time | Dir | TF | Entry | Target | Stop | Conf | Session | Outcome | Exit Price | P&L (pts) | Resolved At |\n`;
+  md += `| Time | Dir | TF | Setup | Lots | Entry | Target | Stop | Conf | Outcome | P&L | MFE% |\n`;
   md += `|---|---|---|---|---|---|---|---|---|---|---|---|\n`;
   for (const e of sorted) {
-    md += `| ${toIstTime(e.asof)} | ${dir(e.direction)} | ${e.timeframe} | ${fmt(e.entryPrice)} | ${fmt(e.targetPrice)} | ${fmt(e.stopPrice)} | ${(e.confidence * 100).toFixed(0)}% | ${e.session.replace(/_/g, " ")} | ${oc(e.outcome)} | ${fmt(e.outcomePrice)} | ${pnlStr(e.pnlPoints)} | ${e.outcomeAt ? toIstTime(e.outcomeAt) : "–"} |\n`;
+    const label = e.setupLabel ? e.setupLabel.split(" · ").slice(2).join(" · ") : "–";
+    md += `| ${toIstTime(e.asof)} | ${dir(e.direction)} | ${e.timeframe} | ${label} | ${e.lotSizeRec ?? "–"} | ${fmt(e.entryPrice)} | ${fmt(e.targetPrice)} | ${fmt(e.stopPrice)} | ${(e.confidence * 100).toFixed(0)}% | ${oc(e.outcome)} | ${pnlStr(e.pnlPoints)} | ${e.mfePct != null ? e.mfePct.toFixed(2) + "%" : "–"} |\n`;
+  }
+
+  // Per-label stats
+  const labelStats = computeLabelStats(sorted);
+  if (labelStats.length > 0) {
+    md += `\n## Per-Setup Win Rate\n\n`;
+    md += `| Setup Label | n | Wins | Losses | Win Rate | Net P&L |\n`;
+    md += `|---|---|---|---|---|---|\n`;
+    for (const s of labelStats) {
+      md += `| ${s.label} | ${s.total} | ${s.wins} | ${s.losses} | ${s.winRate != null ? (s.winRate * 100).toFixed(0) + "%" : "–"} | ${pnlStr(s.netPnl)} |\n`;
+    }
   }
 
   md += `\n## Signal Context\n\n`;

@@ -270,6 +270,9 @@ export type TelegramPrediction = {
     bbPctB5m: number | null; tfAgree: number;
     spartanNet: number; breadthMove: number;
   };
+  setupLabel?: string;
+  lotSizeRec?: "PERFECT" | "GOOD" | "SMALL";
+  partialExits?: Array<{ triggerPct: number; exitPct: number; priceLevel: number }>;
 };
 
 export type TelegramSignalSnapshot = {
@@ -468,13 +471,17 @@ async function renderPredictionCardPng(params: {
   tfAgree: number;
   lifecycle: string; session: string;
   asof: string;
+  setupLabel?: string;
+  lotSizeRec?: "PERFECT" | "GOOD" | "SMALL";
+  partialExits?: Array<{ triggerPct: number; exitPct: number; priceLevel: number }>;
 }): Promise<Uint8Array> {
   const { createCanvas } = await import("@napi-rs/canvas");
   const font = await ensureFonts();
   const isLong = params.direction === "LONG";
   const accent = isLong ? "#22c55e" : "#ef4444";
 
-  const W = 820, H = 440;
+  const hasPartials = (params.partialExits?.length ?? 0) > 0;
+  const W = 820, H = hasPartials ? 510 : 440;
   const canvas = createCanvas(W, H);
   const ctx = canvas.getContext("2d");
 
@@ -545,12 +552,20 @@ async function renderPredictionCardPng(params: {
   ctx.fillStyle = "#4b5563"; ctx.font = `500 10px "${font}"`;
   ctx.textAlign = "center"; ctx.fillText("CONF", arcX, arcY + 20); ctx.textAlign = "left";
 
-  // Session + lifecycle line
+  // Session + lifecycle + lot size line
+  const lotCol = params.lotSizeRec === "PERFECT" ? "#22c55e" : params.lotSizeRec === "GOOD" ? "#f59e0b" : "#9ca3af";
   ctx.fillStyle = "#6b7280"; ctx.font = `500 13px "${font}"`;
-  ctx.fillText(
-    params.session.replace(/_/g, " ") + "   ·   " + params.lifecycle.replace(/_/g, " "),
-    lx, pY + 124,
-  );
+  ctx.fillText(params.session.replace(/_/g, " ") + "   ·   " + params.lifecycle.replace(/_/g, " "), lx, pY + 115);
+  if (params.lotSizeRec) {
+    ctx.fillStyle = lotCol; ctx.font = `700 13px "${font}"`;
+    ctx.textAlign = "right"; ctx.fillText(`${params.lotSizeRec} SIZE`, rx, pY + 115); ctx.textAlign = "left";
+  }
+  // Setup label (abbreviated — skip dir + session prefix which are shown elsewhere)
+  if (params.setupLabel) {
+    const labelParts = params.setupLabel.split(" · ").slice(2).join(" · ");
+    ctx.fillStyle = "#4b5563"; ctx.font = `400 11px "${font}"`;
+    ctx.fillText(labelParts, lx, pY + 132);
+  }
 
   // ── Divider ───────────────────────────────────────────────────────────────
   ctx.strokeStyle = "#1f2937"; ctx.lineWidth = 1;
@@ -652,6 +667,26 @@ async function renderPredictionCardPng(params: {
     ctx.fillText(indChips[i].label, cx5 + 12, ichipY + 20);
     ctx.fillStyle = indChips[i].color; ctx.font = `700 24px "${font}"`;
     ctx.fillText(indChips[i].value, cx5 + 12, ichipY + 50);
+  }
+
+  // ── Partial exit chips (shown when available) ─────────────────────────────
+  if (hasPartials && params.partialExits) {
+    const pexY = pY + 388;
+    ctx.fillStyle = "#4b5563"; ctx.font = `600 11px "${font}"`;
+    ctx.fillText("PARTIAL EXITS", lx, pexY);
+    const chipW = (barTotalW - (params.partialExits.length - 1) * 8) / params.partialExits.length;
+    params.partialExits.forEach((pe, i) => {
+      const cx5 = lx + i * (chipW + 8);
+      const chipY = pexY + 8;
+      const chipH = 52;
+      rr(ctx, cx5, chipY, chipW, chipH, 8);
+      ctx.fillStyle = "#0d1117"; ctx.fill();
+      ctx.strokeStyle = accent + "33"; ctx.lineWidth = 1; ctx.stroke();
+      ctx.fillStyle = "#4b5563"; ctx.font = `500 10px "${font}"`;
+      ctx.fillText(`${pe.triggerPct}% progress → exit ${pe.exitPct}%`, cx5 + 10, chipY + 18);
+      ctx.fillStyle = accent; ctx.font = `700 18px "${font}"`;
+      ctx.fillText(pe.priceLevel.toFixed(0), cx5 + 10, chipY + 42);
+    });
   }
 
   // ── Direction glow stripe at bottom ──────────────────────────────────────
@@ -905,6 +940,9 @@ export class TelegramNotifier {
       lifecycle:  pred.lifecycle,
       session:    pred.session,
       asof:       pred.asof,
+      setupLabel:   pred.setupLabel,
+      lotSizeRec:   pred.lotSizeRec,
+      partialExits: pred.partialExits,
     };
 
     const dirLabel = pred.direction === "LONG" ? "▲ LONG" : "▼ SHORT";

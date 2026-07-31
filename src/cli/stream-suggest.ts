@@ -9,6 +9,7 @@ import { sma, ema, dema, wma, rsi, macd, momentum, tsi, atr, bollingerBands, std
 import { OBITracker } from "../analysis/orderFlow";
 import { AMTTracker, type AMTSnapshot } from "../analysis/auctionMarket";
 import { fetchGlobalCues, type GlobalCuesSnapshot } from "../analysis/globalCues";
+import { fetchDomesticCues, type DomesticCuesSnapshot } from "../analysis/domesticCues";
 import { fetchFiiDii, type FiiDiiSnapshot } from "../news/fiiDii";
 import { CandleAggregator } from "../live/candleAggregator";
 import { getInstruments } from "../instruments/instrumentsCache";
@@ -25,7 +26,7 @@ import { TelegramNotifier } from "../notify/telegram";
 import { computePivotLevels, type PivotLevelsOutput } from "../analysis/pivotLevels";
 import { computeLifecycle, type LifecycleOutput } from "../analysis/lifecycle";
 import { env } from "../config/env";
-import { persistPrediction, generateDailyReport, toIstDate } from "../storage/predictionLog";
+import { persistPrediction, generateDailyReport, toIstDate, computeLabelStats } from "../storage/predictionLog";
 
 type WithToken = { key: string; weight: number; token: number };
 
@@ -90,14 +91,20 @@ type PredictionEntry = {
     rsi1m: number | null; rsi5m: number | null; rsi15m: number | null;
     bbPctB5m: number | null; bbPctB15m: number | null;
     spartanNet: number; surfNet: number; breadthMove: number;
-    tfAgree: number; // how many TFs agreed (1-3)
+    tfAgree: number;
   };
   outcome: "PENDING" | "TARGET_HIT" | "STOP_HIT" | "EXPIRED";
   outcomePrice: number | null;
   outcomeAt: string | null;
   pnlPoints: number | null;
-  trailingStopPrice: number | null; // moves to breakeven at 50% to target, locks profit at 75%
-  mfePoints: number | null;         // max favorable excursion seen so far
+  trailingStopPrice: number | null;
+  mfePoints: number | null;
+  mfePct: number | null;       // mfePoints as % of entryPrice
+  mfeAt: string | null;        // when MFE peaked
+  setupLabel: string;          // human-readable signal combination tag
+  lotSizeRec: "PERFECT" | "GOOD" | "SMALL";  // confidence → position size
+  partialExits: Array<{ triggerPct: number; exitPct: number; priceLevel: number }>;
+  trailingStopBreachAt: string | null; // false-reversal filter: time price first crossed trailing stop
 };
 
 type OptionSelection = {
@@ -145,6 +152,145 @@ function nearestStrike(price: number, step = 50): number {
 function roundToStep(n: number, step: number): number {
   if (!Number.isFinite(n) || step <= 0) return 0;
   return Math.round(n / step) * step;
+}
+
+// ── Prediction helpers ─────────────────────────────────────────────────────
+
+function buildSetupLabel(
+  dir: "LONG" | "SHORT",
+  session: string,
+  lifecycleState: string,
+  spartanNet: number,
+  amtComposite: "BULL" | "BEAR" | null,
+  globalBias: "BULLISH" | "BEARISH" | "NEUTRAL",
+  domesticBias: "BULLISH" | "BEARISH" | "NEUTRAL",
+  trendStr15: string | null,
+  tfAgree: number,
+): string {
+  const parts: string[] = [dir];
+
+  // Session: first word only (MORNING, MIDDAY, AFTERNOON, LATE)
+  parts.push(session.split("_")[0]);
+
+  // Lifecycle (short form)
+  const lcMap: Record<string, string> = {
+    CLEAN_BULLISH_FLOW: "BULLISH_FLOW", CLEAN_BEARISH_FLOW: "BEARISH_FLOW",
+    CE_EDGE: "CE_EDGE", PE_EDGE: "PE_EDGE",
+    INDETERMINATE: "INDETERMINATE", HIGH_RISK: "HIGH_RISK",
+  };
+  parts.push(lcMap[lifecycleState] ?? lifecycleState);
+
+  // Trend structure on 15m
+  if (trendStr15 === "UPTREND" || trendStr15 === "DOWNTREND") parts.push(trendStr15);
+
+  // Spartan flow dominance
+  if (Math.abs(spartanNet) >= 5) parts.push(`SPARTAN_STRONG_${dir === "LONG" ? "BULL" : "BEAR"}`);
+  else if (Math.abs(spartanNet) >= 3) parts.push(`SPARTAN_${dir === "LONG" ? "BULL" : "BEAR"}`);
+
+  // AMT composite
+  if (amtComposite !== null) parts.push(`AMT_${amtComposite}`);
+
+  // TF agreement
+  if (tfAgree === 3) parts.push("TF_ALL");
+
+  // Global cues (only when non-neutral)
+  if (globalBias !== "NEUTRAL") parts.push(`GLOBAL_${globalBias === "BULLISH" ? "BULL" : "BEAR"}`);
+
+  // Domestic indices (BANKNIFTY/SENSEX)
+  if (domesticBias !== "NEUTRAL") parts.push(`DOM_${domesticBias === "BULLISH" ? "BULL" : "BEAR"}`);
+
+  return parts.join(" · ");
+}
+
+export type MarketThesis = {
+  score: number;
+  label: "STRONGLY_BULLISH" | "BULLISH" | "NEUTRAL" | "BEARISH" | "STRONGLY_BEARISH";
+  components: Record<string, number>;
+  reasoning: string;
+};
+
+function computeMarketThesis(params: {
+  lifecycleState: string;
+  trendStr15: string | null;
+  predRefPx: number | null;
+  predVwap: number | null;
+  cprMid: number | null;
+  spartanNet: number;
+  globalBias: "BULLISH" | "BEARISH" | "NEUTRAL";
+  domesticBias: "BULLISH" | "BEARISH" | "NEUTRAL";
+  breadthMove: number;
+}): MarketThesis {
+  const c: Record<string, number> = {};
+
+  // Lifecycle state (highest weight)
+  c.lifecycle = params.lifecycleState === "CLEAN_BULLISH_FLOW" ? 2
+              : params.lifecycleState === "CE_EDGE"            ? 1
+              : params.lifecycleState === "CLEAN_BEARISH_FLOW" ? -2
+              : params.lifecycleState === "PE_EDGE"            ? -1 : 0;
+
+  // 15m trend structure
+  c.trendStructure = params.trendStr15 === "UPTREND" ? 1
+                   : params.trendStr15 === "DOWNTREND" ? -1 : 0;
+
+  // Price vs VWAP
+  c.vwap = (params.predRefPx !== null && params.predVwap !== null)
+    ? (params.predRefPx > params.predVwap ? 1 : -1) : 0;
+
+  // Price vs CPR midpoint
+  c.cpr = (params.predRefPx !== null && params.cprMid !== null)
+    ? (params.predRefPx > params.cprMid ? 1 : -1) : 0;
+
+  // Spartan net flow
+  c.spartan = params.spartanNet >= 4 ? 1 : params.spartanNet <= -4 ? -1 : 0;
+
+  // Breadth (weighted move %)
+  c.breadth = params.breadthMove > 0.15 ? 1 : params.breadthMove < -0.15 ? -1 : 0;
+
+  // Global cues
+  c.global = params.globalBias === "BULLISH" ? 1 : params.globalBias === "BEARISH" ? -1 : 0;
+
+  // Domestic indices
+  c.domestic = params.domesticBias === "BULLISH" ? 1 : params.domesticBias === "BEARISH" ? -1 : 0;
+
+  const score = Object.values(c).reduce((s, v) => s + v, 0);
+  const label = score >= 5  ? "STRONGLY_BULLISH"
+              : score >= 2  ? "BULLISH"
+              : score <= -5 ? "STRONGLY_BEARISH"
+              : score <= -2 ? "BEARISH"
+              : "NEUTRAL";
+
+  const bulls = Object.entries(c).filter(([, v]) => v > 0).map(([k]) => k).join(",");
+  const bears = Object.entries(c).filter(([, v]) => v < 0).map(([k]) => k).join(",");
+  const reasoning = `score ${score >= 0 ? "+" : ""}${score}` +
+    (bulls ? ` · bull[${bulls}]` : "") + (bears ? ` · bear[${bears}]` : "");
+
+  return { score, label, components: c, reasoning };
+}
+
+function lotSizeFromConf(conf: number): "PERFECT" | "GOOD" | "SMALL" {
+  if (conf >= 0.70) return "PERFECT";
+  if (conf >= 0.55) return "GOOD";
+  return "SMALL";
+}
+
+function computePartialExits(
+  dir: "LONG" | "SHORT",
+  entryPrice: number,
+  targetPrice: number,
+): Array<{ triggerPct: number; exitPct: number; priceLevel: number }> {
+  const tpDist = Math.abs(targetPrice - entryPrice);
+  return [
+    { triggerPct: 40, exitPct: 25 },  // at 40% of TP → exit 25% of position
+    { triggerPct: 65, exitPct: 25 },  // at 65% of TP → exit another 25%
+    { triggerPct: 100, exitPct: 50 }, // at full TP → exit remaining 50%
+  ].map(({ triggerPct, exitPct }) => ({
+    triggerPct,
+    exitPct,
+    priceLevel: +(dir === "LONG"
+      ? entryPrice + tpDist * (triggerPct / 100)
+      : entryPrice - tpDist * (triggerPct / 100)
+    ).toFixed(2),
+  }));
 }
 
 async function resolveNseUniverse(weightsPath: string | null): Promise<WithToken[]> {
@@ -938,6 +1084,10 @@ async function main() {
   let fiiDiiLastFetchMs = 0;
   const FIIDII_TTL_MS = 6 * 60 * 60_000; // refresh every 6 hours (data is daily)
 
+  let domesticCues: DomesticCuesSnapshot | null = null;
+  let domesticCuesLastFetchMs = 0;
+  const DOMESTIC_CUES_TTL_MS = 30 * 60_000; // refresh every 30 minutes (intraday)
+
   async function refreshGlobalCuesIfNeeded(): Promise<void> {
     const now = Date.now();
     if (globalCues && now - globalCuesLastFetchMs < GLOBAL_CUES_TTL_MS) return;
@@ -950,6 +1100,13 @@ async function main() {
     if (fiiDii && now - fiiDiiLastFetchMs < FIIDII_TTL_MS) return;
     fiiDiiLastFetchMs = now;
     try { fiiDii = await fetchFiiDii(); } catch { /* ignore */ }
+  }
+
+  async function refreshDomesticCuesIfNeeded(): Promise<void> {
+    const now = Date.now();
+    if (domesticCues && now - domesticCuesLastFetchMs < DOMESTIC_CUES_TTL_MS) return;
+    domesticCuesLastFetchMs = now;
+    try { domesticCues = await fetchDomesticCues(); } catch { /* ignore */ }
   }
 
   async function refreshNewsIfNeeded(): Promise<void> {
@@ -1979,10 +2136,14 @@ async function main() {
           ? predRefPx - p.entryPrice
           : p.entryPrice - predRefPx;
         if (favMove > 0) {
-          p.mfePoints = Math.max(p.mfePoints ?? 0, +favMove.toFixed(2));
+          const newMfe = +favMove.toFixed(2);
+          if (newMfe > (p.mfePoints ?? 0)) {
+            p.mfePoints = newMfe;
+            p.mfePct = +(newMfe / p.entryPrice * 100).toFixed(3);
+            p.mfeAt = new Date().toISOString();
+          }
           const progress = tpDist > 0 ? favMove / tpDist : 0;
           if (progress >= 0.75) {
-            // Lock in 40% of TP distance as profit
             const lockPts = tpDist * 0.40;
             const newStop = p.direction === "LONG"
               ? p.entryPrice + lockPts
@@ -1992,7 +2153,6 @@ async function main() {
             if (p.direction === "SHORT" && newStop < (p.trailingStopPrice ?? Infinity))
               p.trailingStopPrice = +newStop.toFixed(2);
           } else if (progress >= 0.50) {
-            // Move stop to breakeven
             if (p.direction === "LONG" && p.entryPrice > (p.trailingStopPrice ?? 0))
               p.trailingStopPrice = +p.entryPrice.toFixed(2);
             if (p.direction === "SHORT" && p.entryPrice < (p.trailingStopPrice ?? Infinity))
@@ -2009,15 +2169,45 @@ async function main() {
         const ageMs = Date.now() - new Date(p.asof).getTime();
         const expiryMs = p.timeframe === "1m" ? 15 * 60_000 : p.timeframe === "5m" ? 45 * 60_000 : 90 * 60_000;
         const nowTs = new Date().toISOString();
+        // False-reversal filter: only trigger the trailing stop after price has
+        // stayed below/above the effective stop for 30 continuous seconds.
+        // This prevents single-wick or noise exits from shaking out a good trade.
+        const FALSE_REVERSAL_DELAY_MS = 30_000;
         let resolved = false;
         if (p.direction === "LONG") {
-          if (predRefPx >= p.targetPrice) { p.outcome = "TARGET_HIT"; p.outcomePrice = predRefPx; p.outcomeAt = nowTs; p.pnlPoints = +(predRefPx - p.entryPrice).toFixed(2); resolved = true; }
-          else if (predRefPx <= effectiveStop) { p.outcome = "STOP_HIT"; p.outcomePrice = predRefPx; p.outcomeAt = nowTs; p.pnlPoints = +(predRefPx - p.entryPrice).toFixed(2); resolved = true; }
-          else if (ageMs >= expiryMs) { p.outcome = "EXPIRED"; p.outcomePrice = predRefPx; p.outcomeAt = nowTs; p.pnlPoints = +(predRefPx - p.entryPrice).toFixed(2); resolved = true; }
+          if (predRefPx >= p.targetPrice) {
+            p.trailingStopBreachAt = null;
+            p.outcome = "TARGET_HIT"; p.outcomePrice = predRefPx; p.outcomeAt = nowTs;
+            p.pnlPoints = +(predRefPx - p.entryPrice).toFixed(2); resolved = true;
+          } else if (predRefPx <= effectiveStop) {
+            if (p.trailingStopBreachAt === null) {
+              p.trailingStopBreachAt = nowTs; // start breach timer
+            } else if (Date.now() - new Date(p.trailingStopBreachAt).getTime() >= FALSE_REVERSAL_DELAY_MS) {
+              p.trailingStopBreachAt = null;
+              p.outcome = "STOP_HIT"; p.outcomePrice = predRefPx; p.outcomeAt = nowTs;
+              p.pnlPoints = +(predRefPx - p.entryPrice).toFixed(2); resolved = true;
+            }
+          } else {
+            p.trailingStopBreachAt = null; // price recovered — reset filter
+            if (ageMs >= expiryMs) { p.outcome = "EXPIRED"; p.outcomePrice = predRefPx; p.outcomeAt = nowTs; p.pnlPoints = +(predRefPx - p.entryPrice).toFixed(2); resolved = true; }
+          }
         } else {
-          if (predRefPx <= p.targetPrice) { p.outcome = "TARGET_HIT"; p.outcomePrice = predRefPx; p.outcomeAt = nowTs; p.pnlPoints = +(p.entryPrice - predRefPx).toFixed(2); resolved = true; }
-          else if (predRefPx >= effectiveStop) { p.outcome = "STOP_HIT"; p.outcomePrice = predRefPx; p.outcomeAt = nowTs; p.pnlPoints = +(p.entryPrice - predRefPx).toFixed(2); resolved = true; }
-          else if (ageMs >= expiryMs) { p.outcome = "EXPIRED"; p.outcomePrice = predRefPx; p.outcomeAt = nowTs; p.pnlPoints = +(p.entryPrice - predRefPx).toFixed(2); resolved = true; }
+          if (predRefPx <= p.targetPrice) {
+            p.trailingStopBreachAt = null;
+            p.outcome = "TARGET_HIT"; p.outcomePrice = predRefPx; p.outcomeAt = nowTs;
+            p.pnlPoints = +(p.entryPrice - predRefPx).toFixed(2); resolved = true;
+          } else if (predRefPx >= effectiveStop) {
+            if (p.trailingStopBreachAt === null) {
+              p.trailingStopBreachAt = nowTs;
+            } else if (Date.now() - new Date(p.trailingStopBreachAt).getTime() >= FALSE_REVERSAL_DELAY_MS) {
+              p.trailingStopBreachAt = null;
+              p.outcome = "STOP_HIT"; p.outcomePrice = predRefPx; p.outcomeAt = nowTs;
+              p.pnlPoints = +(p.entryPrice - predRefPx).toFixed(2); resolved = true;
+            }
+          } else {
+            p.trailingStopBreachAt = null;
+            if (ageMs >= expiryMs) { p.outcome = "EXPIRED"; p.outcomePrice = predRefPx; p.outcomeAt = nowTs; p.pnlPoints = +(p.entryPrice - predRefPx).toFixed(2); resolved = true; }
+          }
         }
         if (resolved) persistPrediction(p as any, env.PREDICTIONS_DIR).catch(() => {});
       }
@@ -2174,6 +2364,16 @@ async function main() {
           if (!globalOk) continue;
         }
 
+        // Gate 14: Domestic index alignment (BANKNIFTY + SENSEX)
+        // If both domestic indices are moving strongly AGAINST the predicted direction,
+        // the NIFTY move is isolated and likely to revert — block the trade.
+        if (domesticCues && domesticCues.biasScore !== 0) {
+          const domesticContradicts = dir === "LONG"
+            ? domesticCues.biasScore <= -2
+            : domesticCues.biasScore >= 2;
+          if (domesticContradicts) continue;
+        }
+
         // All gates passed — fire prediction
         if (predRefPx === null || !Number.isFinite(predRefPx)) continue;
         const bestTfSrc = [s15, s5, s1].find((s) => s.recommendation === dir);
@@ -2210,15 +2410,23 @@ async function main() {
           const fiiAgrees = dir === "LONG" ? fiiDii.fiiSignal === "BULLISH" : fiiDii.fiiSignal === "BEARISH";
           conf = Math.min(CONF_CAP, fiiAgrees ? conf * 1.03 : conf * 0.97);
         }
+        // Domestic indices (BANKNIFTY/SENSEX) alignment → +4% or -6%
+        if (domesticCues && domesticCues.bias !== "NEUTRAL") {
+          const domAgrees = dir === "LONG" ? domesticCues.bias === "BULLISH" : domesticCues.bias === "BEARISH";
+          conf = Math.min(CONF_CAP, domAgrees ? conf * 1.04 : conf * 0.94);
+        }
 
+        const entryTargetPrice = +(dir === "LONG" ? predRefPx + tpPoints : predRefPx - tpPoints).toFixed(2);
+        const entryStopPrice   = +(dir === "LONG" ? predRefPx - slPoints : predRefPx + slPoints).toFixed(2);
+        const domBias = domesticCues?.bias ?? "NEUTRAL";
         const entry: PredictionEntry = {
           id: `${nowMs}-${dir}`,
           asof: new Date().toISOString(),
           timeframe: tfLabel,
           direction: dir,
           entryPrice: predRefPx,
-          targetPrice: +(dir === "LONG" ? predRefPx + tpPoints : predRefPx - tpPoints).toFixed(2),
-          stopPrice: +(dir === "LONG" ? predRefPx - slPoints : predRefPx + slPoints).toFixed(2),
+          targetPrice: entryTargetPrice,
+          stopPrice: entryStopPrice,
           confidence: +conf.toFixed(3),
           lifecycle: lifecycle.state,
           session: lifecycle.session,
@@ -2237,8 +2445,24 @@ async function main() {
           outcomePrice: null,
           outcomeAt: null,
           pnlPoints: null,
-          trailingStopPrice: +(dir === "LONG" ? predRefPx - slPoints : predRefPx + slPoints).toFixed(2),
+          trailingStopPrice: entryStopPrice,
           mfePoints: 0,
+          mfePct: null,
+          mfeAt: null,
+          setupLabel: buildSetupLabel(
+            dir,
+            lifecycle.session,
+            lifecycle.state,
+            spartanUp - spartanDn,
+            amtSignals.compositeSignal,
+            globalCues?.bias ?? "NEUTRAL",
+            domBias,
+            trendStr15,
+            tfAgree,
+          ),
+          lotSizeRec: lotSizeFromConf(conf),
+          partialExits: computePartialExits(dir, predRefPx, entryTargetPrice),
+          trailingStopBreachAt: null,
         };
 
         predictionLog.unshift(entry);
@@ -2247,6 +2471,34 @@ async function main() {
         persistPrediction(entry as any, env.PREDICTIONS_DIR).catch(() => {});
       }
     }
+
+    // ── Market Thesis ──────────────────────────────────────────────
+    const snapshotVwap = (() => {
+      if (c5.length === 0) return null;
+      const totalVol = c5.reduce((s, c) => s + (Number(c.volume) || 0), 0);
+      if (totalVol === 0) return null;
+      return c5.reduce((s, c) => {
+        const tp = (Number(c.high) + Number(c.low) + Number(c.close)) / 3;
+        return s + tp * (Number(c.volume) || 0);
+      }, 0) / totalVol;
+    })();
+    const snapshotCprMid = pivotLevels
+      ? (pivotLevels.tc.value + pivotLevels.bc.value) / 2
+      : null;
+    const marketThesis = computeMarketThesis({
+      lifecycleState: lifecycle.state,
+      trendStr15: s15.signals?.trendStructure ?? null,
+      predRefPx: spotLtp ?? futLtp,
+      predVwap: snapshotVwap,
+      cprMid: snapshotCprMid,
+      spartanNet: spartanUp - spartanDn,
+      globalBias: globalCues?.bias ?? "NEUTRAL",
+      domesticBias: domesticCues?.bias ?? "NEUTRAL",
+      breadthMove: breadth.weighted_move_pct ?? 0,
+    });
+
+    // ── Per-label win rate ─────────────────────────────────────────
+    const perLabelStats = computeLabelStats(predictionLog as any);
 
     return {
       asof: new Date().toISOString(),
@@ -2266,11 +2518,14 @@ async function main() {
       lifecycle,
       lifecycleHistory: [...lifecycleHistory],
       predictionLog: [...predictionLog],
+      marketThesis,
+      perLabelStats,
       rms: { maxDailyLoss: maxDailyLossVal, maxRiskPerTrade: maxRiskPerTradeVal },
       options: optionsSuggestion,
       orderFlow: obiTracker.snapshot(),
       auctionMarket: amtSignals,
       globalCues,
+      domesticCues,
       fiiDii,
       news: news
         ? {
@@ -2390,6 +2645,7 @@ async function main() {
     await refreshNewsIfNeeded();
     await refreshGlobalCuesIfNeeded();
     await refreshFiiDiiIfNeeded();
+    await refreshDomesticCuesIfNeeded();
 
     const snap = buildOutputSnapshot();
     // eslint-disable-next-line no-console
@@ -2421,6 +2677,7 @@ async function main() {
     refreshNewsIfNeeded().catch(() => {});
     refreshGlobalCuesIfNeeded().catch(() => {});
     refreshFiiDiiIfNeeded().catch(() => {});
+    refreshDomesticCuesIfNeeded().catch(() => {});
 
     // Options: resolve/subscribe ATM options for the configured expiry.
     try {
