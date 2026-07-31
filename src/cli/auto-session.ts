@@ -71,17 +71,34 @@ function cookieHeader(jar: string[]): string {
 // ── Step 3: follow redirects until we land on the redirect_uri ─────────────
 
 async function extractRequestToken(jar: string[], apiKey: string): Promise<string> {
-  let url = `https://kite.zerodha.com/connect/login?v=3&api_key=${apiKey}&skip_session=1`;
+  // Note: skip_session=1 was removed — Kite deprecated it and now returns 400.
+  // We already have a valid session cookie from steps 1+2, so it isn't needed.
+  let url = `https://kite.zerodha.com/connect/login?v=3&api_key=${apiKey}`;
 
   for (let hop = 0; hop < 8; hop++) {
+    console.error(`[auto-session] hop ${hop}: GET ${url}`);
     const res = await fetch(url, {
-      headers: { Cookie: cookieHeader(jar) },
+      headers: {
+        Cookie: cookieHeader(jar),
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0 Safari/537.36",
+        Accept: "text/html,application/xhtml+xml,*/*",
+      },
       redirect: "manual",
     });
     jar = mergeSetCookies(res, jar);
+    console.error(`[auto-session] hop ${hop}: status ${res.status}`);
 
     const location = res.headers.get("location");
-    if (!location) throw new Error(`No redirect at hop ${hop} (status ${res.status}) from: ${url}`);
+
+    if (!location) {
+      // Non-redirect response — read body for diagnostics
+      const body = await res.text().catch(() => "(unreadable)");
+      throw new Error(
+        `No redirect at hop ${hop} (status ${res.status}) from: ${url}\nBody: ${body.slice(0, 500)}`
+      );
+    }
+
+    console.error(`[auto-session] hop ${hop}: → ${location}`);
 
     // Once the redirect leaves kite.zerodha.com the request_token is in the URL
     if (!location.includes("kite.zerodha.com")) {
@@ -89,7 +106,7 @@ async function extractRequestToken(jar: string[], apiKey: string): Promise<strin
       try { parsed = new URL(location); }
       catch { throw new Error(`Unparseable redirect URL: ${location}`); }
       const token = parsed.searchParams.get("request_token");
-      if (!token) throw new Error(`No request_token found in: ${location}`);
+      if (!token) throw new Error(`No request_token found in redirect: ${location}`);
       return token;
     }
 
