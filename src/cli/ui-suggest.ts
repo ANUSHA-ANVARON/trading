@@ -432,6 +432,27 @@ tr:hover td{background:rgba(232,236,246,.025)}
   <div id="chainNote" class="note">Waiting for chain…</div>
 </div>
 
+<!-- MARKET THESIS + DOMESTIC CUES -->
+<div class="card" id="thesisCard">
+  <div class="ct">Market Thesis &amp; Cues</div>
+  <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-start;margin-top:8px">
+    <!-- Thesis score block -->
+    <div id="thesisBlock" style="background:var(--b1);border-radius:8px;padding:12px 16px;min-width:200px;flex:0 0 auto">
+      <div style="font-size:10px;font-weight:700;letter-spacing:.7px;text-transform:uppercase;color:var(--m);margin-bottom:6px">Market Thesis</div>
+      <div id="thesisLabel" style="font-size:20px;font-weight:800;letter-spacing:.5px">–</div>
+      <div id="thesisScore" style="font-size:12px;color:var(--m);margin-top:2px">score –</div>
+      <div id="thesisReasoning" style="font-size:10px;color:var(--m);margin-top:6px;line-height:1.5;max-width:260px"></div>
+    </div>
+    <!-- Components grid -->
+    <div id="thesisComponents" style="display:flex;flex-wrap:wrap;gap:8px;align-items:flex-start;flex:1 1 auto"></div>
+    <!-- Domestic cues -->
+    <div id="domCuesBlock" style="background:var(--b1);border-radius:8px;padding:12px 16px;min-width:180px;flex:0 0 auto">
+      <div style="font-size:10px;font-weight:700;letter-spacing:.7px;text-transform:uppercase;color:var(--m);margin-bottom:6px">Domestic Cues</div>
+      <div id="domCuesInner" style="display:flex;flex-direction:column;gap:6px"></div>
+    </div>
+  </div>
+</div>
+
 <!-- PREDICTION LOG -->
 <div class="card" id="predCard">
   <div class="ctog open" id="predTog">
@@ -465,7 +486,9 @@ tr:hover td{background:rgba(232,236,246,.025)}
             <th style="padding:4px 6px">RSI 5m/15m</th>
             <th style="padding:4px 6px">BB %B 5m</th>
             <th style="padding:4px 6px">TFs</th>
-            <th style="padding:4px 6px">Lifecycle</th>
+            <th style="padding:4px 6px">Setup</th>
+            <th style="padding:4px 6px">Lots</th>
+            <th style="padding:4px 6px">MFE%</th>
             <th style="padding:4px 6px">Status</th>
             <th style="padding:4px 6px">P&amp;L pts</th>
           </tr>
@@ -724,6 +747,52 @@ function renderLifecycle(obj){
   }
 }
 
+// ── Market Thesis ──────────────────────────────────────────────────
+function renderMarketThesis(thesis){
+  var lb=e('thesisLabel'),sc=e('thesisScore'),rs=e('thesisReasoning'),comp=e('thesisComponents');
+  if(!lb)return;
+  if(!thesis){lb.textContent='–';if(sc)sc.textContent='score –';return;}
+  var col=thesis.label&&thesis.label.indexOf('BULL')>=0?'var(--g2)':thesis.label&&thesis.label.indexOf('BEAR')>=0?'var(--r2)':'var(--a2)';
+  lb.textContent=String(thesis.label||'–').replace(/_/g,' ');
+  lb.style.color=col;
+  if(sc)sc.textContent='score '+(thesis.score>=0?'+':'')+thesis.score+' / ±8';
+  if(rs)rs.textContent=String(thesis.reasoning||'');
+  if(comp){
+    comp.innerHTML='';
+    var comps=thesis.components||{};
+    var keys=Object.keys(comps);
+    for(var i=0;i<keys.length;i++){
+      var k=keys[i],v=comps[k];
+      var vc=v>0?'var(--g2)':v<0?'var(--r2)':'var(--m)';
+      var chip=document.createElement('div');
+      chip.style.cssText='background:var(--b1);border-radius:6px;padding:6px 10px;font-size:10px;min-width:80px;text-align:center';
+      chip.innerHTML='<div style="color:var(--m);margin-bottom:2px">'+k.replace(/([A-Z])/g,' $1').trim()+'</div>'+
+        '<div style="font-weight:700;font-size:14px;color:'+vc+'">'+(v>=0?'+':'')+v+'</div>';
+      comp.appendChild(chip);
+    }
+  }
+}
+
+// ── Domestic Cues ──────────────────────────────────────────────────
+function renderDomesticCues(dc){
+  var el=e('domCuesInner');if(!el)return;
+  if(!dc){el.innerHTML='<div style="font-size:11px;color:var(--m)">–</div>';return;}
+  var items=[dc.bankNifty,dc.sensex];
+  var html='';
+  for(var i=0;i<items.length;i++){
+    var it=items[i];if(!it)continue;
+    var pct=it.changePct!=null?it.changePct:null;
+    var col=it.signal==='BULLISH'?'var(--g2)':it.signal==='BEARISH'?'var(--r2)':'var(--m)';
+    html+='<div style="display:flex;justify-content:space-between;align-items:center;gap:12px">'+
+      '<span style="font-size:11px;color:var(--m)">'+it.name+'</span>'+
+      '<span style="font-weight:700;font-size:12px;color:'+col+'">'+(pct!=null?(pct>=0?'+':'')+pct.toFixed(2)+'%':'–')+'</span>'+
+      '</div>';
+  }
+  var biasCol=dc.bias==='BULLISH'?'var(--g2)':dc.bias==='BEARISH'?'var(--r2)':'var(--m)';
+  html+='<div style="margin-top:4px;padding-top:4px;border-top:1px solid var(--b2);font-size:10px;font-weight:700;color:'+biasCol+'">'+String(dc.bias||'NEUTRAL')+'</div>';
+  el.innerHTML=html;
+}
+
 // ── Prediction Log ─────────────────────────────────────────────────
 function renderPredLog(arr){
   var tbody=e('predBody2'),note=e('predNote'),stats=e('predStats');
@@ -775,7 +844,11 @@ function renderPredLog(arr){
                oc==='EXPIRED'?'<span style="color:var(--m)">⏱ EXPIRED</span>':
                '<span style="color:var(--a2);font-weight:700">● LIVE</span>';
     var dirPill='<span style="font-weight:800;color:'+(isLong?'var(--g2)':'var(--r2)')+';">'+(isLong?'▲ LONG':'▼ SHORT')+'</span>';
-    var lcStr=String(r.lifecycle||'–').replace(/_/g,' ');
+    // Setup label — show only the meaningful part (drop LONG/SHORT prefix)
+    var setupParts=r.setupLabel?r.setupLabel.split(' · '):[];
+    var setupShort=setupParts.length>2?setupParts.slice(2).join(' · '):r.setupLabel||'–';
+    var lotsCol=r.lotSizeRec==='PERFECT'?'var(--g2)':r.lotSizeRec==='GOOD'?'var(--a2)':'var(--m)';
+    var mfePctStr=r.mfePct!=null?'<span style="color:var(--g2)">'+Number(r.mfePct).toFixed(2)+'%</span>':'<span style="color:var(--m)">–</span>';
     tr2.innerHTML=
       '<td style="white-space:nowrap;padding:4px 6px;font-size:11px">'+toIST(r.asof)+'</td>'+
       '<td style="padding:4px 6px;text-align:center"><span style="font-size:11px;padding:1px 6px;border-radius:4px;background:var(--b2)">'+String(r.timeframe||'–')+'</span></td>'+
@@ -787,7 +860,9 @@ function renderPredLog(arr){
       '<td style="padding:4px 6px;text-align:center">'+rsi5v+' / '+rsi15v+'</td>'+
       '<td style="padding:4px 6px;text-align:center">'+bb5v+'</td>'+
       '<td style="padding:4px 6px;text-align:center">'+(r.signals&&r.signals.tfAgree!=null?r.signals.tfAgree+'/3':'–')+'</td>'+
-      '<td style="padding:4px 6px;font-size:10px;color:var(--m)">'+lcStr+'</td>'+
+      '<td style="padding:4px 6px;font-size:9px;color:var(--m);max-width:180px;white-space:normal;line-height:1.4">'+setupShort+'</td>'+
+      '<td style="padding:4px 6px;text-align:center;font-weight:700;font-size:11px;color:'+lotsCol+'">'+(r.lotSizeRec||'–')+'</td>'+
+      '<td style="padding:4px 6px;text-align:center">'+mfePctStr+'</td>'+
       '<td style="padding:4px 6px;text-align:center">'+ocPill+'</td>'+
       '<td style="padding:4px 6px;text-align:right">'+pnlStr+'</td>';
     tbody.appendChild(tr2);
@@ -1238,6 +1313,8 @@ function applyUpdate(obj){
   renderPredLog(obj.predictionLog||[]);
   renderSH(obj.stockSignalHistory||[]);
   renderLifecycle(obj);
+  renderMarketThesis(obj.marketThesis||null);
+  renderDomesticCues(obj.domesticCues||null);
   var score=calcScore(obj);updateGauge(score);updateScoreFacts(obj,score);
 
 

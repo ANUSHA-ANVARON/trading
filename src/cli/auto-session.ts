@@ -182,7 +182,10 @@ async function main() {
   console.log("Kite session auto-generated successfully.");
 }
 
-main().catch((err) => {
-  console.error("[auto-session] FAILED:", (err as Error).message);
-  process.exit(1);
-});
+// Only self-execute when run directly (npm run session:auto), not when imported.
+if (process.argv[1]?.endsWith("auto-session.ts") || process.argv[1]?.endsWith("auto-session.js")) {
+  main().catch((err) => {
+    console.error("[auto-session] FAILED:", (err as Error).message);
+    process.exit(1);
+  });
+}
