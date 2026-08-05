@@ -15,6 +15,7 @@
     "order:fo": "tsx src/cli/place-fo-order.ts",
     "backtest:run": "tsx src/cli/backtest-run.ts",
     "backtest:kite": "tsx src/cli/backtest-kite.ts",
+    "backtest:signal": "tsx src/cli/backtest-signal.ts",
     "backtest:options:today": "tsx src/cli/backtest-options-today.ts",
     "paper:run": "tsx src/cli/paper-run.ts",
     "analyze:nifty": "tsx src/cli/analyze-nifty.ts",

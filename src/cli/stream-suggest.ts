@@ -27,6 +27,7 @@ import { computePivotLevels, type PivotLevelsOutput } from "../analysis/pivotLev
 import { computeLifecycle, type LifecycleOutput } from "../analysis/lifecycle";
 import { env } from "../config/env";
 import { persistPrediction, generateDailyReport, toIstDate, computeLabelStats, type LabelStats } from "../storage/predictionLog";
+import { readRuleConfig, updateSyncCache, syncRuleConfig, gateEnabled, gateParam, type RuleConfig } from "../config/ruleConfig";
 
 type WithToken = { key: string; weight: number; token: number };
 
@@ -2303,121 +2304,143 @@ async function main() {
         for (const c of gatePassCounts.values())  { c.long = 0; c.short = 0; }
       }
 
+      const rc = syncRuleConfig();
+
       for (const dir of ["LONG", "SHORT"] as const) {
         // Kill switch active → skip
         if (nowMs < killSwitchUntil) continue;
 
         // Gate 0: market must be in an active trading session
-        // LATE_TRANSITION_CAUTION (14:30-15:00) and POST_3PM_REDUCED_RISK (15:00-15:30)
-        // are too noisy for new entries — IV collapses, operators unwind positions,
-        // indicators whipsaw. Only trade MORNING_MOMENTUM, MIDDAY_GRIND, AFTERNOON_TRANSITION.
-        const blockedSessions = ["CLOSED", "OPENING_RANGE", "LATE_TRANSITION_CAUTION", "POST_3PM_REDUCED_RISK"];
-        if (blockedSessions.includes(lifecycle.session)) { bumpBlock("G0_SESSION", dir); continue; }
+        if (gateEnabled(rc, "G0_SESSION")) {
+          const blockedSessions = ["CLOSED", "OPENING_RANGE", "LATE_TRANSITION_CAUTION", "POST_3PM_REDUCED_RISK"];
+          if (blockedSessions.includes(lifecycle.session)) { bumpBlock("G0_SESSION", dir); continue; }
+        }
 
         const lastFired = dir === "LONG" ? lastPredLong : lastPredShort;
         if (nowMs - lastFired < PRED_DEBOUNCE_MS) continue;
 
         // Gate 1: lifecycle must show directional flow (CLEAN or EDGE states)
-        // CE_EDGE/PE_EDGE are "building momentum" states — valid entries, not weak signals.
-        const validStates = dir === "LONG"
-          ? ["CLEAN_BULLISH_FLOW", "CE_EDGE"]
-          : ["CLEAN_BEARISH_FLOW", "PE_EDGE"];
-        if (!validStates.includes(lifecycle.state)) { bumpBlock("G1_LIFECYCLE", dir); continue; }
+        if (gateEnabled(rc, "G1_LIFECYCLE")) {
+          const validStates = dir === "LONG"
+            ? ["CLEAN_BULLISH_FLOW", "CE_EDGE"]
+            : ["CLEAN_BEARISH_FLOW", "PE_EDGE"];
+          if (!validStates.includes(lifecycle.state)) { bumpBlock("G1_LIFECYCLE", dir); continue; }
+        }
 
-        // Gate 2: 2+ of 3 TFs must agree — lifecycle already ensures this for CLEAN states,
-        // but CE_EDGE/PE_EDGE may have only 1 TF aligned so we still enforce 2/3 here.
+        // Gate 2: N-of-3 TFs must agree
         const tfRecs = [s1.recommendation, s5.recommendation, s15.recommendation];
         const tfAgree = tfRecs.filter((r) => r === dir).length;
-        if (tfAgree < 2) { bumpBlock("G2_TF_AGREE", dir); continue; }
+        if (gateEnabled(rc, "G2_TF_AGREE")) {
+          const minAgree = gateParam(rc, "G2_TF_AGREE", "minAgree", 2);
+          if (tfAgree < minAgree) { bumpBlock("G2_TF_AGREE", dir); continue; }
+        }
 
-        // Gate 3: RSI confirms on BOTH 5m and 15m (midline cross, not extreme entry)
-        const rsiOk = dir === "LONG"
-          ? (rsi5 !== null && rsi5 >= 50 && rsi15 !== null && rsi15 >= 48)
-          : (rsi5 !== null && rsi5 <= 50 && rsi15 !== null && rsi15 <= 52);
-        if (!rsiOk) { bumpBlock("G3_RSI", dir); continue; }
+        // Gate 3: RSI confirms on BOTH 5m and 15m
+        if (gateEnabled(rc, "G3_RSI")) {
+          const l5  = gateParam(rc, "G3_RSI", "longMin5m",   50);
+          const l15 = gateParam(rc, "G3_RSI", "longMin15m",  48);
+          const s5t = gateParam(rc, "G3_RSI", "shortMax5m",  50);
+          const s15t= gateParam(rc, "G3_RSI", "shortMax15m", 52);
+          const rsiOk = dir === "LONG"
+            ? (rsi5 !== null && rsi5 >= l5 && rsi15 !== null && rsi15 >= l15)
+            : (rsi5 !== null && rsi5 <= s5t && rsi15 !== null && rsi15 <= s15t);
+          if (!rsiOk) { bumpBlock("G3_RSI", dir); continue; }
+        }
 
-        // Gate 4: BB confirms on 5m or 15m (price not at extreme, in right half of band)
-        const bbOk = dir === "LONG"
-          ? ((bb5 && bb5.pctB > 0.45 && bb5.pctB < 0.88) || (bb15 && bb15.pctB > 0.45 && bb15.pctB < 0.88))
-          : ((bb5 && bb5.pctB < 0.55 && bb5.pctB > 0.12) || (bb15 && bb15.pctB < 0.55 && bb15.pctB > 0.12));
-        if (!bbOk) { bumpBlock("G4_BB", dir); continue; }
+        // Gate 4: BB confirms on 5m or 15m
+        if (gateEnabled(rc, "G4_BB")) {
+          const bLow  = gateParam(rc, "G4_BB", "longLow",   0.45);
+          const bHigh = gateParam(rc, "G4_BB", "longHigh",  0.88);
+          const bsLow = gateParam(rc, "G4_BB", "shortLow",  0.12);
+          const bsHigh= gateParam(rc, "G4_BB", "shortHigh", 0.55);
+          const bbOk = dir === "LONG"
+            ? ((bb5 && bb5.pctB > bLow && bb5.pctB < bHigh) || (bb15 && bb15.pctB > bLow && bb15.pctB < bHigh))
+            : ((bb5 && bb5.pctB < bsHigh && bb5.pctB > bsLow) || (bb15 && bb15.pctB < bsHigh && bb15.pctB > bsLow));
+          if (!bbOk) { bumpBlock("G4_BB", dir); continue; }
+        }
 
         // Gate 5: breadth supports
-        const breadthOk = dir === "LONG"
-          ? ((breadth.weighted_move_pct ?? 0) > 0.05 && advDecRatio > 1.0)
-          : ((breadth.weighted_move_pct ?? 0) < -0.05 && advDecRatio < 1.0);
-        if (!breadthOk) { bumpBlock("G5_BREADTH", dir); continue; }
+        if (gateEnabled(rc, "G5_BREADTH")) {
+          const minMove   = gateParam(rc, "G5_BREADTH", "minMovePct", 0.08);
+          const minAdvDec = gateParam(rc, "G5_BREADTH", "minAdvDec",  1.1);
+          const maxAdvDec = gateParam(rc, "G5_BREADTH", "maxAdvDec",  0.91);
+          const breadthOk = dir === "LONG"
+            ? ((breadth.weighted_move_pct ?? 0) > minMove && advDecRatio > minAdvDec)
+            : ((breadth.weighted_move_pct ?? 0) < -minMove && advDecRatio < maxAdvDec);
+          if (!breadthOk) { bumpBlock("G5_BREADTH", dir); continue; }
+        }
 
-        // Gate 6: PCR not strongly against direction (skip if no data)
-        if (predPcr !== null) {
-          // PCR < 0.85 = heavy call buying = bullish sentiment → don't SHORT
-          // PCR > 1.15 = heavy put buying = bearish sentiment → don't LONG
-          const pcrOk = dir === "LONG" ? predPcr <= 1.30 : predPcr >= 0.70;
+        // Gate 6: PCR not strongly against direction
+        if (gateEnabled(rc, "G6_PCR") && predPcr !== null) {
+          const pcrMax = gateParam(rc, "G6_PCR", "longMax",  1.30);
+          const pcrMin = gateParam(rc, "G6_PCR", "shortMin", 0.70);
+          const pcrOk = dir === "LONG" ? predPcr <= pcrMax : predPcr >= pcrMin;
           if (!pcrOk) { bumpBlock("G6_PCR", dir); continue; }
         }
 
-        // Gate 7: IV skew not strongly against direction (skip if no IV data)
-        if (predCeIv !== null && predPeIv !== null) {
-          // Positive skew (put IV > call IV) = market pricing downside risk = bearish tilt
+        // Gate 7: IV skew not strongly against direction
+        if (gateEnabled(rc, "G7_IV_SKEW") && predCeIv !== null && predPeIv !== null) {
+          const maxSkew = gateParam(rc, "G7_IV_SKEW", "maxSkew", 0.08);
           const skew = predPeIv - predCeIv;
-          const skewOk = dir === "LONG" ? skew < 0.08 : skew > -0.08;
+          const skewOk = dir === "LONG" ? skew < maxSkew : skew > -maxSkew;
           if (!skewOk) { bumpBlock("G7_IV_SKEW", dir); continue; }
         }
 
-        // Gate 8: RSI not already overextended — entering on exhaustion = stop hit
-        // If RSI is already deep in overbought/oversold, the move is done, not starting
-        const rsiExtendedOk = dir === "LONG"
-          ? (rsi5 === null || rsi5 <= 68) && (rsi15 === null || rsi15 <= 65)
-          : (rsi5 === null || rsi5 >= 32) && (rsi15 === null || rsi15 >= 35);
-        if (!rsiExtendedOk) { bumpBlock("G8_RSI_EXTEND", dir); continue; }
+        // Gate 8: RSI not already overextended
+        if (gateEnabled(rc, "G8_RSI_EXTEND")) {
+          const lMax5  = gateParam(rc, "G8_RSI_EXTEND", "longMax5m",   68);
+          const lMax15 = gateParam(rc, "G8_RSI_EXTEND", "longMax15m",  65);
+          const sMin5  = gateParam(rc, "G8_RSI_EXTEND", "shortMin5m",  32);
+          const sMin15 = gateParam(rc, "G8_RSI_EXTEND", "shortMin15m", 35);
+          const rsiExtendedOk = dir === "LONG"
+            ? (rsi5 === null || rsi5 <= lMax5) && (rsi15 === null || rsi15 <= lMax15)
+            : (rsi5 === null || rsi5 >= sMin5) && (rsi15 === null || rsi15 >= sMin15);
+          if (!rsiExtendedOk) { bumpBlock("G8_RSI_EXTEND", dir); continue; }
+        }
 
-        // Gate 9: VWAP bias — price must be on the correct side of intraday VWAP
-        // Institutions use VWAP as the primary benchmark; fading VWAP = fighting the flow
-        if (predVwap !== null && predRefPx !== null) {
+        // Gate 9: VWAP side
+        if (gateEnabled(rc, "G9_VWAP") && predVwap !== null && predRefPx !== null) {
           const vwapOk = dir === "LONG" ? predRefPx > predVwap : predRefPx < predVwap;
           if (!vwapOk) { bumpBlock("G9_VWAP", dir); continue; }
         }
 
-        // Gate 10: Market structure — 15m must show a clear trend, not RANGING
-        // RANGING markets produce the most false signals (SMA cross whipsaws)
+        // Gate 10: 15m trend structure — no RANGING
         const trendStr15 = s15.signals?.trendStructure ?? null;
-        if (trendStr15 === "RANGING") { bumpBlock("G10_TREND", dir); continue; }
-        if (trendStr15 !== null) {
-          const structOk = dir === "LONG" ? trendStr15 === "UPTREND" : trendStr15 === "DOWNTREND";
-          if (!structOk) { bumpBlock("G10_TREND", dir); continue; }
+        if (gateEnabled(rc, "G10_TREND")) {
+          if (trendStr15 === "RANGING") { bumpBlock("G10_TREND", dir); continue; }
+          if (trendStr15 !== null) {
+            const structOk = dir === "LONG" ? trendStr15 === "UPTREND" : trendStr15 === "DOWNTREND";
+            if (!structOk) { bumpBlock("G10_TREND", dir); continue; }
+          }
         }
 
-        // Gate 11: Opening Range bias — only trade in the direction of the OR breakout
-        // Price above OR_HIGH = day has bullish bias; below OR_LOW = bearish bias
-        // If price is still inside the OR, the day's direction is not established yet
-        if (orHigh !== null && orLow !== null && predRefPx !== null) {
+        // Gate 11: Opening Range bias
+        if (gateEnabled(rc, "G11_OR_BIAS") && orHigh !== null && orLow !== null && predRefPx !== null) {
           const orBiasOk = dir === "LONG" ? predRefPx > orHigh : predRefPx < orLow;
           if (!orBiasOk) { bumpBlock("G11_OR_BIAS", dir); continue; }
         }
 
-        // Gate 12: Don't chase — if price is already >0.3% extended from 5m EMA9,
-        // the entry is late; the move is done and RSI is likely near extreme already
-        const ema9_5m = typeof s5.signals?.ema9 === "number" ? s5.signals.ema9 : null;
-        if (ema9_5m !== null && predRefPx !== null && ema9_5m > 0) {
-          const distPct = ((predRefPx - ema9_5m) / ema9_5m) * 100;
-          const chaseOk = dir === "LONG" ? distPct <= 0.30 : distPct >= -0.30;
-          if (!chaseOk) { bumpBlock("G12_CHASE", dir); continue; }
+        // Gate 12: Don't chase — price too extended from EMA9
+        if (gateEnabled(rc, "G12_CHASE")) {
+          const maxExt = gateParam(rc, "G12_CHASE", "maxExtendPct", 0.30);
+          const ema9_5m = typeof s5.signals?.ema9 === "number" ? s5.signals.ema9 : null;
+          if (ema9_5m !== null && predRefPx !== null && ema9_5m > 0) {
+            const distPct = ((predRefPx - ema9_5m) / ema9_5m) * 100;
+            const chaseOk = dir === "LONG" ? distPct <= maxExt : distPct >= -maxExt;
+            if (!chaseOk) { bumpBlock("G12_CHASE", dir); continue; }
+          }
         }
 
-        // Gate 13: Global bias — only in MORNING_MOMENTUM; blocks if overnight cues strongly contradict
-        // In midday/afternoon, domestic flows dominate so global cues are not a hard gate.
-        // FII/DII is 1-day lagged so it only adjusts confidence, never blocks.
-        if (lifecycle.session === "MORNING_MOMENTUM" && globalCues?.biasStrong) {
+        // Gate 13: Global cues — morning only
+        if (gateEnabled(rc, "G13_GLOBAL") && lifecycle.session === "MORNING_MOMENTUM" && globalCues?.biasStrong) {
           const globalOk = dir === "LONG"
             ? globalCues.bias !== "BEARISH"
             : globalCues.bias !== "BULLISH";
           if (!globalOk) { bumpBlock("G13_GLOBAL", dir); continue; }
         }
 
-        // Gate 14: Domestic index alignment (BANKNIFTY + SENSEX)
-        // If both domestic indices are moving strongly AGAINST the predicted direction,
-        // the NIFTY move is isolated and likely to revert — block the trade.
-        if (domesticCues && domesticCues.biasScore !== 0) {
+        // Gate 14: Domestic index alignment
+        if (gateEnabled(rc, "G14_DOMESTIC") && domesticCues && domesticCues.biasScore !== 0) {
           const domesticContradicts = dir === "LONG"
             ? domesticCues.biasScore <= -2
             : domesticCues.biasScore >= 2;
@@ -2706,6 +2729,7 @@ async function main() {
     await refreshGlobalCuesIfNeeded();
     await refreshFiiDiiIfNeeded();
     await refreshDomesticCuesIfNeeded();
+    updateSyncCache(await readRuleConfig());
 
     const snap = buildOutputSnapshot();
     // eslint-disable-next-line no-console

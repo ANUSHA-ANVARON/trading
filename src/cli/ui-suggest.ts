@@ -507,12 +507,13 @@ tr:hover td{background:rgba(232,236,246,.025)}
     <span class="chev">▼</span>
   </div>
   <div class="cbody cls" id="rulesBody" style="max-height:0">
-    <div style="overflow:auto">
+    <div style="overflow:auto;max-height:480px">
       <table class="mono" style="width:100%;border-collapse:collapse;font-size:12px">
         <thead style="position:sticky;top:0;background:var(--bg2);z-index:1">
           <tr>
             <th style="text-align:left;padding:4px 8px">Gate</th>
-            <th style="text-align:left;padding:4px 8px">Threshold</th>
+            <th style="padding:4px 8px;text-align:center">On</th>
+            <th style="text-align:left;padding:4px 8px">Params / Description</th>
             <th style="padding:4px 8px">Blocked ▲</th>
             <th style="padding:4px 8px">Blocked ▼</th>
             <th style="padding:4px 8px">Passed ▲</th>
@@ -524,6 +525,37 @@ tr:hover td{background:rgba(232,236,246,.025)}
       </table>
     </div>
     <div id="rulesNote" class="note">Waiting for gate data…</div>
+    <div style="display:flex;align-items:center;gap:12px;margin:10px 8px 4px">
+      <button class="btn btn-g" id="rulesSaveBtn" onclick="saveRuleConfig()">Save Changes</button>
+      <span id="rulesSaveStatus" style="font-size:12px"></span>
+      <span class="hint" style="margin-left:auto">Changes take effect within 5 s · reload page to see updated defaults</span>
+    </div>
+  </div>
+</div>
+
+<!-- AUTO LEARNING -->
+<div class="card" id="learnCard">
+  <div class="ctog" id="learnTog">
+    <div class="ct" style="margin:0">Auto Learning <span class="hint">win-rate analysis across all historical trades · updates every 5 min · click Refresh to force reload</span></div>
+    <span class="chev">▼</span>
+  </div>
+  <div class="cbody cls" id="learnBody" style="max-height:0">
+    <div style="display:flex;align-items:center;gap:10px;margin:0 0 10px;flex-wrap:wrap">
+      <div id="learnSummary" style="font-size:12px;color:var(--m)">Loading…</div>
+      <button class="btn" style="margin-left:auto" onclick="loadLearnStats(true)">↺ Refresh</button>
+    </div>
+    <!-- Suggestions -->
+    <div id="learnSuggestions"></div>
+    <!-- Bucket tabs -->
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin:14px 0 6px">
+      <button class="btn" id="learnTabRsi" onclick="learnTab('rsi')">RSI 5m</button>
+      <button class="btn" id="learnTabTf" onclick="learnTab('tf')">TF Agree</button>
+      <button class="btn" id="learnTabLabel" onclick="learnTab('label')">Setup Label</button>
+      <button class="btn" id="learnTabBreadth" onclick="learnTab('breadth')">Breadth</button>
+      <button class="btn" id="learnTabBb" onclick="learnTab('bb')">BB%B</button>
+      <button class="btn" id="learnTabLot" onclick="learnTab('lot')">Lot Size</button>
+    </div>
+    <div id="learnTable" style="overflow:auto;max-height:340px"></div>
   </div>
 </div>
 
@@ -601,7 +633,9 @@ function coll(tId,bId){
     else{b.classList.add('cls');b.style.maxHeight='0';}
   });
 }
-coll('sigTog','sigBody'); coll('logTog','logBody'); coll('rsnTog','rsnBody'); coll('lcHistTog','lcHistBody'); coll('predTog','predBody'); coll('rulesTog','rulesBody');
+coll('sigTog','sigBody'); coll('logTog','logBody'); coll('rsnTog','rsnBody'); coll('lcHistTog','lcHistBody'); coll('predTog','predBody'); coll('rulesTog','rulesBody'); coll('learnTog','learnBody');
+loadRuleConfig();
+loadLearnStats(false);
 
 // ── Utils ──────────────────────────────────────────────────────────
 function fmt(n,d){if(n==null||!isFinite(n))return '-';return Number(n).toFixed(d!=null?d:2);}
@@ -774,32 +808,231 @@ function renderLifecycle(obj){
   }
 }
 
+// ── Rule Config (gate toggles + threshold editor) ───────────────────
+var _ruleConfig=null,_lastGates=[];
+async function loadRuleConfig(){
+  try{
+    var r=await fetch('/api/rule-config');
+    if(r.ok) _ruleConfig=await r.json();
+  }catch(ex){ console.warn('[rule-config] load failed',ex); }
+}
+async function saveRuleConfig(){
+  var btn=e('rulesSaveBtn'),status=e('rulesSaveStatus');
+  if(btn) btn.disabled=true;
+  if(status){status.textContent='Saving…';status.style.color='var(--m)';}
+  var patch={gates:{}};
+  var rows=document.querySelectorAll('[data-gate-id]');
+  rows.forEach(function(row){
+    var id=row.getAttribute('data-gate-id');
+    var tog=row.querySelector('.gate-tog');
+    var params={};
+    row.querySelectorAll('.gate-param').forEach(function(inp){
+      var key=inp.getAttribute('data-key');
+      var val=parseFloat(inp.value);
+      if(!isNaN(val)) params[key]=val;
+    });
+    var entry={enabled:tog?tog.checked:true};
+    if(Object.keys(params).length) entry.params=params;
+    patch.gates[id]=entry;
+  });
+  try{
+    var r=await fetch('/api/rule-config',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(patch)});
+    var j=await r.json();
+    if(j.ok){
+      if(status){status.textContent='Saved ✓';status.style.color='var(--g2)';setTimeout(function(){if(status)status.textContent='';},3000);}
+      await loadRuleConfig();
+    } else {
+      if(status){status.textContent='Error: '+(j.error||'unknown');status.style.color='var(--r2)';}
+    }
+  }catch(ex){
+    if(status){status.textContent='Failed: '+ex;status.style.color='var(--r2)';}
+  }
+  if(btn) btn.disabled=false;
+}
+
 // ── Rule Gates ─────────────────────────────────────────────────────
 function renderRuleGates(gates){
   var tbody=e('rulesBody2'),note=e('rulesNote');
   if(!tbody)return;
   if(!gates||!gates.length){if(note)note.textContent='Waiting for gate data…';return;}
   if(note)note.textContent='';
-  tbody.innerHTML='';
+  var existing=tbody.querySelectorAll('tr[data-gate-id]');
+  var rebuild=existing.length!==gates.length;
   for(var i=0;i<gates.length;i++){
     var g=gates[i];
     var totalBlock=(g.blockLong||0)+(g.blockShort||0);
     var totalPass=(g.passLong||0)+(g.passShort||0);
     var totalAttempts=totalBlock+totalPass;
-    // pressure = % of attempts this gate blocked (higher = tighter filter)
     var pressure=totalAttempts>0?Math.round(totalBlock/totalAttempts*100):null;
     var pressureCol=pressure===null?'var(--m)':pressure>=70?'var(--r2)':pressure>=40?'var(--a2)':'var(--g2)';
-    var tr=document.createElement('tr');
-    tr.innerHTML=
-      '<td style="padding:4px 8px;font-weight:600">'+String(g.name||g.id)+'</td>'+
-      '<td style="padding:4px 8px;font-size:10px;color:var(--m);max-width:260px;white-space:normal;line-height:1.4">'+String(g.description||'')+'</td>'+
-      '<td style="padding:4px 8px;text-align:center;color:var(--r2)">'+(g.blockLong||0)+'</td>'+
-      '<td style="padding:4px 8px;text-align:center;color:var(--r2)">'+(g.blockShort||0)+'</td>'+
-      '<td style="padding:4px 8px;text-align:center;color:var(--g2)">'+(g.passLong||0)+'</td>'+
-      '<td style="padding:4px 8px;text-align:center;color:var(--g2)">'+(g.passShort||0)+'</td>'+
-      '<td style="padding:4px 8px;text-align:center;font-weight:700;color:'+pressureCol+'">'+(pressure!==null?pressure+'%':'–')+'</td>';
-    tbody.appendChild(tr);
+    if(rebuild){
+      var gcfg=_ruleConfig&&_ruleConfig.gates&&_ruleConfig.gates[g.id];
+      var enabled=gcfg?gcfg.enabled!==false:true;
+      var params=gcfg&&gcfg.params?gcfg.params:{};
+      var paramKeys=Object.keys(params);
+      var paramsHtml='';
+      if(paramKeys.length){
+        paramsHtml='<div style="display:flex;flex-wrap:wrap;gap:4px 8px;align-items:center">';
+        for(var pi=0;pi<paramKeys.length;pi++){
+          var pk=paramKeys[pi],pv=params[pk];
+          var step=String(pv).indexOf('.')>=0?'0.01':'1';
+          paramsHtml+='<label style="font-size:9px;color:var(--m);display:flex;align-items:center;gap:2px">'+
+            '<span style="white-space:nowrap">'+pk+'</span>'+
+            '<input class="gate-param" data-key="'+pk+'" type="number" value="'+pv+'" step="'+step+'"'+
+            ' style="width:46px;background:var(--b1);border:1px solid var(--b3);border-radius:4px;color:var(--fg);padding:2px 4px;font-size:10px">'+
+            '</label>';
+        }
+        paramsHtml+='</div>';
+      } else {
+        paramsHtml='<span style="font-size:10px;color:var(--m);line-height:1.4">'+String(g.description||'')+'</span>';
+      }
+      var tr=document.createElement('tr');
+      tr.setAttribute('data-gate-id',g.id);
+      tr.innerHTML=
+        '<td style="padding:4px 8px;font-weight:600;white-space:nowrap;vertical-align:middle">'+String(g.name||g.id)+'</td>'+
+        '<td style="padding:4px 8px;text-align:center;vertical-align:middle">'+
+          '<input type="checkbox" class="gate-tog"'+(enabled?' checked':'')+' title="Enable/disable this gate" style="cursor:pointer;width:15px;height:15px">'+
+        '</td>'+
+        '<td style="padding:4px 8px;max-width:280px;vertical-align:middle">'+paramsHtml+'</td>'+
+        '<td style="padding:4px 8px;text-align:center;color:var(--r2)" class="gc-bl">'+(g.blockLong||0)+'</td>'+
+        '<td style="padding:4px 8px;text-align:center;color:var(--r2)" class="gc-bs">'+(g.blockShort||0)+'</td>'+
+        '<td style="padding:4px 8px;text-align:center;color:var(--g2)" class="gc-pl">'+(g.passLong||0)+'</td>'+
+        '<td style="padding:4px 8px;text-align:center;color:var(--g2)" class="gc-ps">'+(g.passShort||0)+'</td>'+
+        '<td style="padding:4px 8px;text-align:center;font-weight:700;color:'+pressureCol+'" class="gc-pr">'+(pressure!==null?pressure+'%':'–')+'</td>';
+      tbody.appendChild(tr);
+    } else {
+      var row=existing[i];
+      var bl=row.querySelector('.gc-bl'); if(bl) bl.textContent=String(g.blockLong||0);
+      var bs=row.querySelector('.gc-bs'); if(bs) bs.textContent=String(g.blockShort||0);
+      var pl=row.querySelector('.gc-pl'); if(pl) pl.textContent=String(g.passLong||0);
+      var ps=row.querySelector('.gc-ps'); if(ps) ps.textContent=String(g.passShort||0);
+      var pr=row.querySelector('.gc-pr');
+      if(pr){pr.textContent=pressure!==null?pressure+'%':'–';pr.style.color=pressureCol;}
+    }
   }
+}
+
+// ── Auto Learning ──────────────────────────────────────────────────
+var _learnStats=null,_learnTab='rsi';
+async function loadLearnStats(force){
+  var sumEl=e('learnSummary');
+  if(sumEl)sumEl.textContent=force?'Refreshing…':'Loading…';
+  try{
+    var r=await fetch('/api/learn-stats'+(force?'?force=1':''));
+    if(!r.ok)throw new Error('HTTP '+r.status);
+    _learnStats=await r.json();
+    renderLearnStats();
+  }catch(ex){
+    if(sumEl)sumEl.textContent='Failed to load: '+ex;
+  }
+}
+function learnTab(tab){
+  _learnTab=tab;
+  var tabs=['rsi','tf','label','breadth','bb','lot'];
+  tabs.forEach(function(t){
+    var b=e('learnTab'+t.charAt(0).toUpperCase()+t.slice(1));
+    if(b)b.style.background=t===tab?'var(--b3)':'';
+  });
+  renderLearnBucketTable();
+}
+function renderLearnStats(){
+  if(!_learnStats)return;
+  var s=_learnStats;
+  var wr=s.overallWinRate!=null?Math.round(s.overallWinRate*100)+'%':'–';
+  var sumEl=e('learnSummary');
+  if(sumEl)sumEl.innerHTML=
+    '<b>'+s.totalPredictions+'</b> total · <b>'+s.resolvedPredictions+'</b> resolved · win rate <b>'+wr+'</b>'+
+    ' · <span style="color:var(--m);font-size:10px">as of '+new Date(s.asof).toLocaleTimeString()+'</span>';
+  // Suggestions
+  var sugEl=e('learnSuggestions');
+  if(sugEl){
+    if(!s.suggestions||!s.suggestions.length){
+      sugEl.innerHTML='<div style="font-size:11px;color:var(--m);margin-bottom:8px">No suggestions yet — need at least 5 resolved trades per signal bucket.</div>';
+    } else {
+      var html='<div style="margin-bottom:10px">';
+      for(var i=0;i<s.suggestions.length;i++){
+        var sg=s.suggestions[i];
+        var col=sg.severity==='warn'?'var(--a2)':sg.severity==='good'?'var(--g2)':'var(--m)';
+        var icon=sg.severity==='warn'?'⚠':'✓';
+        html+='<div style="display:flex;align-items:flex-start;gap:8px;padding:7px 10px;margin:4px 0;background:var(--b1);border-radius:6px;border-left:3px solid '+col+'">';
+        html+='<span style="color:'+col+';font-size:13px;flex-shrink:0">'+icon+'</span>';
+        html+='<div>';
+        html+='<div style="font-size:11px;color:var(--fg)">'+String(sg.message)+'</div>';
+        if(sg.gateId&&sg.gateId!=='ALL'){
+          html+='<div style="font-size:10px;color:var(--m);margin-top:2px">'+sg.gateId+(sg.paramKey?' · '+sg.paramKey:'')+'</div>';
+        }
+        html+='</div>';
+        if(sg.suggestedValue!==null&&sg.suggestedValue!==undefined){
+          html+='<button class="btn btn-g" style="margin-left:auto;flex-shrink:0;font-size:10px" '+
+            'onclick="applyLearnSuggestion(\''+sg.gateId+'\',\''+sg.paramKey+'\','+sg.suggestedValue+')">'+
+            'Apply '+sg.suggestedValue+'</button>';
+        }
+        html+='</div>';
+      }
+      html+='</div>';
+      sugEl.innerHTML=html;
+    }
+  }
+  learnTab(_learnTab);
+}
+async function applyLearnSuggestion(gateId,paramKey,value){
+  if(!gateId||!paramKey)return;
+  var patch={gates:{}};
+  patch.gates[gateId]={params:{}};
+  patch.gates[gateId].params[paramKey]=value;
+  try{
+    var r=await fetch('/api/rule-config',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(patch)});
+    var j=await r.json();
+    if(j.ok){
+      await loadRuleConfig();
+      // rebuild rule gates table to reflect new value
+      var tbody=e('rulesBody2');if(tbody)tbody.innerHTML='';
+      if(_lastGates)renderRuleGates(_lastGates);
+      alert('Applied '+paramKey+'='+value+' to '+gateId+' (takes effect within 5 s)');
+    } else { alert('Error: '+(j.error||'unknown')); }
+  }catch(ex){ alert('Failed: '+ex); }
+}
+function learnBucketTable(rows){
+  if(!rows||!rows.length)return '<div style="font-size:11px;color:var(--m);padding:8px">No data yet.</div>';
+  var html='<table class="mono" style="width:100%;border-collapse:collapse;font-size:11px">';
+  html+='<thead style="background:var(--bg2)"><tr>';
+  html+='<th style="text-align:left;padding:4px 8px">Bucket</th>';
+  html+='<th style="padding:4px 8px">Dir</th>';
+  html+='<th style="padding:4px 8px">n</th>';
+  html+='<th style="padding:4px 8px">W</th>';
+  html+='<th style="padding:4px 8px">L</th>';
+  html+='<th style="padding:4px 8px">Win%</th>';
+  html+='<th style="padding:4px 8px">Net P&L</th>';
+  html+='</tr></thead><tbody>';
+  for(var i=0;i<rows.length;i++){
+    var r=rows[i];
+    var wr=r.winRate!=null?Math.round(r.winRate*100)+'%':'–';
+    var wrCol=r.winRate===null?'var(--m)':r.winRate>=0.55?'var(--g2)':r.winRate>=0.40?'var(--a2)':'var(--r2)';
+    var pnlCol=r.netPnl>=0?'var(--g2)':'var(--r2)';
+    var dirCol=r.direction==='LONG'?'var(--g2)':r.direction==='SHORT'?'var(--r2)':'var(--m)';
+    html+='<tr style="border-top:1px solid var(--b2)">';
+    html+='<td style="padding:4px 8px;font-size:10px">'+String(r.key)+'</td>';
+    html+='<td style="padding:4px 8px;text-align:center;color:'+dirCol+'">'+String(r.direction)+'</td>';
+    html+='<td style="padding:4px 8px;text-align:center">'+r.n+'</td>';
+    html+='<td style="padding:4px 8px;text-align:center;color:var(--g2)">'+r.wins+'</td>';
+    html+='<td style="padding:4px 8px;text-align:center;color:var(--r2)">'+r.losses+'</td>';
+    html+='<td style="padding:4px 8px;text-align:center;font-weight:700;color:'+wrCol+'">'+wr+'</td>';
+    html+='<td style="padding:4px 8px;text-align:center;color:'+pnlCol+'">'+(r.netPnl>=0?'+':'')+Number(r.netPnl).toFixed(1)+'</td>';
+    html+='</tr>';
+  }
+  html+='</tbody></table>';
+  return html;
+}
+function renderLearnBucketTable(){
+  var el=e('learnTable');if(!el||!_learnStats)return;
+  var s=_learnStats;
+  var data=_learnTab==='rsi'?s.byRsi5m:
+    _learnTab==='tf'?s.byTfAgree:
+    _learnTab==='label'?s.bySetupLabel:
+    _learnTab==='breadth'?s.byBreadth:
+    _learnTab==='bb'?s.byBbPctB:
+    s.byLotSize;
+  el.innerHTML=learnBucketTable(data||[]);
 }
 
 // ── Market Thesis ──────────────────────────────────────────────────
@@ -1370,7 +1603,7 @@ function applyUpdate(obj){
   renderLifecycle(obj);
   renderMarketThesis(obj.marketThesis||null);
   renderDomesticCues(obj.domesticCues||null);
-  renderRuleGates(obj.ruleGates||[]);
+  _lastGates=obj.ruleGates||[];renderRuleGates(_lastGates);
   var score=calcScore(obj);updateGauge(score);updateScoreFacts(obj,score);
 
 
@@ -1944,6 +2177,61 @@ ${ok ? '<p style="color:#aaa">Token saved. Engine restarting — go back to the 
         const { fetchPeriodStats } = await import("../storage/predictionLog");
         const { env: cfg } = await import("../config/env");
         const stats = await fetchPeriodStats(cfg.PREDICTIONS_DIR);
+        res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+        res.end(JSON.stringify(stats));
+      } catch (e) {
+        res.writeHead(500, { "content-type": "application/json" }); res.end(JSON.stringify({ error: String(e) }));
+      }
+      return;
+    }
+
+    if (url?.startsWith("/api/rule-config")) {
+      if (req.method === "GET") {
+        try {
+          const { readRuleConfig } = await import("../config/ruleConfig");
+          const cfg = await readRuleConfig();
+          res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+          res.end(JSON.stringify(cfg));
+        } catch (e) {
+          res.writeHead(500, { "content-type": "application/json" }); res.end(JSON.stringify({ error: String(e) }));
+        }
+        return;
+      }
+      if (req.method === "POST") {
+        try {
+          const body = await readBody(req);
+          const patch = JSON.parse(body) as { gates?: Record<string, { enabled?: boolean; params?: Record<string, number> }> };
+          const { readRuleConfig, writeRuleConfig } = await import("../config/ruleConfig");
+          const current = await readRuleConfig();
+          const updated = { ...current, gates: { ...current.gates } };
+          if (patch.gates) {
+            for (const [id, ov] of Object.entries(patch.gates)) {
+              updated.gates[id] = {
+                ...(updated.gates[id] ?? { enabled: true }),
+                enabled: ov.enabled ?? updated.gates[id]?.enabled ?? true,
+                params: { ...(updated.gates[id]?.params ?? {}), ...(ov.params ?? {}) },
+              };
+            }
+          }
+          await writeRuleConfig(updated);
+          res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+          res.end(JSON.stringify({ ok: true }));
+        } catch (e) {
+          res.writeHead(500, { "content-type": "application/json" }); res.end(JSON.stringify({ error: String(e) }));
+        }
+        return;
+      }
+      res.writeHead(405, { "content-type": "application/json" }); res.end(JSON.stringify({ error: "method not allowed" }));
+      return;
+    }
+
+    if (url?.startsWith("/api/learn-stats")) {
+      const qs = url.includes("?") ? url.slice(url.indexOf("?") + 1) : "";
+      const force = new URLSearchParams(qs).get("force") === "1";
+      try {
+        const { computeLearnStats } = await import("../storage/learnStats");
+        const { env: cfg } = await import("../config/env");
+        const stats = await computeLearnStats(cfg.PREDICTIONS_DIR, force);
         res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
         res.end(JSON.stringify(stats));
       } catch (e) {
