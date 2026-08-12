@@ -964,7 +964,7 @@ function renderLearnStats(){
         html+='</div>';
         if(sg.suggestedValue!==null&&sg.suggestedValue!==undefined){
           html+='<button class="btn btn-g" style="margin-left:auto;flex-shrink:0;font-size:10px" '+
-            'onclick="applyLearnSuggestion(\''+sg.gateId+'\',\''+sg.paramKey+'\','+sg.suggestedValue+')">'+
+            'onclick="applyLearnSuggestion(&#39;'+sg.gateId+'&#39;,&#39;'+sg.paramKey+'&#39;,'+sg.suggestedValue+')">'+
             'Apply '+sg.suggestedValue+'</button>';
         }
         html+='</div>';
